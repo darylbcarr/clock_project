@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "clock_manager.cpp"
+        "position_sensor.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        stepper_motor
+        driver
+        esp_adc
+        esp_timer
+        freertos
+        log
+        nvs_flash
+        lwip
+)

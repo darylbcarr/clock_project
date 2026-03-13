@@ -1,0 +1,16 @@
+# Clock Project SDK Configuration Defaults
+
+# Enable C++ exceptions (needed for std::string formatting etc.)
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# FreeRTOS tick rate
+CONFIG_FREERTOS_HZ=1000
+
+# Enable SNTP
+CONFIG_LWIP_DHCP_GET_NTP_SRV=y
+
+# ADC / GPIO
+CONFIG_ADC_SUPPRESS_DEPRECATE_WARN=y
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
