@@ -34,6 +34,7 @@
 #include "display.h"
 #include "clock_manager.h"
 #include "networking.h"
+#include "led_manager.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -301,7 +302,8 @@ void Menu::action_task_fn(void* arg)
 
 // ── build() — full menu tree with wired callbacks ────────────────────────────
 
-void Menu::build(ClockManager& cm, Networking& net) {
+void Menu::build(ClockManager& cm, Networking& net, LedManager& leds) {
+    leds_ = &leds;
 
     auto root = std::make_unique<MenuItem>("Main");
 
@@ -362,12 +364,68 @@ void Menu::build(ClockManager& cm, Networking& net) {
         show_time_screen(cm);
     }));
 
-    // ── Lights (placeholder for WS2812B) ─────────────────────────────────────
+    // ── Lights ────────────────────────────────────────────────────────────────
+    // s_led_tgt persists across menu interactions (static local).
+    static LedManager::Target s_led_tgt = LedManager::Target::BOTH;
+
     auto lights = std::make_unique<MenuItem>("Lights");
-    lights->addChild(std::make_unique<MenuItem>("Color",
-        []() { ESP_LOGI(TAG, "Lights:Color - not yet implemented"); }));
-    lights->addChild(std::make_unique<MenuItem>("Brightness",
-        []() { ESP_LOGI(TAG, "Lights:Brightness - not yet implemented"); }));
+
+    lights->addChild(std::make_unique<MenuItem>("Next Effect", [&leds]() {
+        leds.next_effect(s_led_tgt);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Bright +", [&leds]() {
+        for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
+            uint8_t b = leds.get_brightness(i);
+            leds.set_brightness(s_led_tgt, b > 230 ? 255 : b + 25);
+        }
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Bright -", [&leds]() {
+        for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
+            uint8_t b = leds.get_brightness(i);
+            leds.set_brightness(s_led_tgt, b < 25 ? 0 : b - 25);
+        }
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("White", [&leds]() {
+        leds.set_color(s_led_tgt, 255, 255, 255);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Warm White", [&leds]() {
+        leds.set_color(s_led_tgt, 255, 180, 80);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Red", [&leds]() {
+        leds.set_color(s_led_tgt, 255, 0, 0);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Blue", [&leds]() {
+        leds.set_color(s_led_tgt, 0, 80, 255);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Green", [&leds]() {
+        leds.set_color(s_led_tgt, 0, 220, 50);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("Purple", [&leds]() {
+        leds.set_color(s_led_tgt, 180, 0, 255);
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("-> Both", []() {
+        s_led_tgt = LedManager::Target::BOTH;
+        ESP_LOGI(TAG, "LED target: Both");
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("-> Strip 1", []() {
+        s_led_tgt = LedManager::Target::STRIP_1;
+        ESP_LOGI(TAG, "LED target: Strip 1");
+    }));
+
+    lights->addChild(std::make_unique<MenuItem>("-> Strip 2", []() {
+        s_led_tgt = LedManager::Target::STRIP_2;
+        ESP_LOGI(TAG, "LED target: Strip 2");
+    }));
 
     // ── System ────────────────────────────────────────────────────────────────
     auto sys = std::make_unique<MenuItem>("System");

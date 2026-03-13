@@ -2,6 +2,8 @@
 
 #include "clock_manager.h"
 #include "networking.h"
+
+class LedManager;
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,7 +13,7 @@
 
 class WebServer {
 public:
-    WebServer(ClockManager& clock_mgr, Networking& net);
+    WebServer(ClockManager& clock_mgr, Networking& net, LedManager& leds);
     ~WebServer();
 
     void start();
@@ -38,6 +40,7 @@ private:
 
     ClockManager&  clock_mgr_;
     Networking&    net_;
+    LedManager&    leds_;
     httpd_handle_t server_          = nullptr;
     TaskHandle_t   ws_task_handle_  = nullptr;
     TaskHandle_t   cmd_task_handle_ = nullptr;

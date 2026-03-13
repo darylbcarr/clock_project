@@ -39,6 +39,7 @@ private:
 // ── Forward declarations for all system components ────────────────────────────
 class ClockManager;
 class Networking;
+class LedManager;
 
 class Menu {
 public:
@@ -77,7 +78,7 @@ public:
      * @brief Build the full menu tree and wire all callbacks.
      *        Call once after all system components are initialised.
      */
-    void build(ClockManager& clock_mgr, Networking& net);
+    void build(ClockManager& clock_mgr, Networking& net, LedManager& leds);
 
     // ── Display blanking ──────────────────────────────────────────────────────
     /**
@@ -98,6 +99,7 @@ public:
 
 private:
     Display&                    display_;
+    LedManager*                 leds_             = nullptr;
     std::unique_ptr<MenuItem>   root_menu_;
     MenuItem*                   current_menu_     = nullptr;
     size_t                      current_selection_ = 0;

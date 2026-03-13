@@ -341,6 +341,70 @@ static const char WEB_UI_HTML[] = R"html(
     border-color: rgba(0,212,255,0.55);
   }
 
+  .btn.active-effect {
+    background: linear-gradient(135deg, rgba(168,85,247,0.25), rgba(0,212,255,0.15));
+    border-color: rgba(168,85,247,0.5);
+    color: var(--accent2);
+    font-weight: 600;
+  }
+
+  /* ── Brightness bar ── */
+  .bright-wrap {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    height: 8px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .bright-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    transition: width 0.4s ease;
+  }
+
+  /* ── Colour swatch ── */
+  .swatch {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.15);
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+
+  /* ── Strip status row ── */
+  .strip-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+  }
+  .strip-row + .strip-row {
+    border-top: 1px solid var(--border);
+  }
+  .strip-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    width: 54px;
+    flex-shrink: 0;
+  }
+  .strip-effect {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .strip-bright {
+    font-size: 12px;
+    color: var(--text-muted);
+    width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
   /* ── Info card for About ── */
   .about-card {
     background: linear-gradient(135deg,
@@ -478,6 +542,9 @@ static const char WEB_UI_HTML[] = R"html(
     </button>
     <button class="nav-item" data-section="network">
       <span class="nav-icon">&#127760;</span> Network
+    </button>
+    <button class="nav-item" data-section="lights">
+      <span class="nav-icon">&#128161;</span> Lights
     </button>
     <button class="nav-item" data-section="system">
       <span class="nav-icon">&#9881;</span> System
@@ -651,6 +718,71 @@ static const char WEB_UI_HTML[] = R"html(
     </div>
   </section>
 
+  <!-- ── Lights Section ── -->
+  <section class="section" id="sec-lights">
+    <div class="section-header">
+      <div class="section-title">Lights</div>
+      <div class="section-sub">WS2812B strip control &mdash; both strips, independently extensible</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Strip Status</div>
+      <div class="strip-row">
+        <span class="strip-label">Strip 1</span>
+        <span class="swatch" id="sv-led1-swatch"></span>
+        <span class="strip-effect" id="sv-led1-effect">--</span>
+        <span class="strip-bright" id="sv-led1-bright">--</span>
+      </div>
+      <div class="bright-wrap">
+        <div class="bright-fill" id="sv-led1-bar" style="width:50%"></div>
+      </div>
+      <div class="strip-row">
+        <span class="strip-label">Strip 2</span>
+        <span class="swatch" id="sv-led2-swatch"></span>
+        <span class="strip-effect" id="sv-led2-effect">--</span>
+        <span class="strip-bright" id="sv-led2-bright">--</span>
+      </div>
+      <div class="bright-wrap">
+        <div class="bright-fill" id="sv-led2-bar" style="width:50%"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Effects</div>
+      <div class="btn-grid" id="effect-btn-grid">
+        <button class="btn" data-cmd="led-off"    data-effect="Off">&#9898; Off</button>
+        <button class="btn" data-cmd="led-static" data-effect="Static">&#11044; Static</button>
+        <button class="btn" data-cmd="led-breathe" data-effect="Breathe">&#127744; Breathe</button>
+        <button class="btn" data-cmd="led-rainbow" data-effect="Rainbow">&#127752; Rainbow</button>
+        <button class="btn" data-cmd="led-chase"  data-effect="Chase">&#9889; Chase</button>
+        <button class="btn" data-cmd="led-sparkle" data-effect="Sparkle">&#10024; Sparkle</button>
+        <button class="btn" data-cmd="led-wipe"   data-effect="Wipe">&#9654;&#9654; Wipe</button>
+        <button class="btn" data-cmd="led-comet"  data-effect="Comet">&#9732; Comet</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Brightness</div>
+      <div class="btn-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+        <button class="btn" data-cmd="led-bright-down">&#9660; Dim</button>
+        <button class="btn" data-cmd="led-next">&#8635; Next Effect</button>
+        <button class="btn" data-cmd="led-bright-up">&#9650; Bright</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Colour Presets &mdash; Both Strips</div>
+      <div class="btn-grid">
+        <button class="btn" data-cmd="led-color-white">&#9898; White</button>
+        <button class="btn" data-cmd="led-color-warm">&#127774; Warm</button>
+        <button class="btn" data-cmd="led-color-red"   style="color:#f87171">&#9679; Red</button>
+        <button class="btn" data-cmd="led-color-blue"  style="color:#60a5fa">&#9679; Blue</button>
+        <button class="btn" data-cmd="led-color-green" style="color:#4ade80">&#9679; Green</button>
+        <button class="btn" data-cmd="led-color-purple" style="color:#c084fc">&#9679; Purple</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ── System Section ── -->
   <section class="section" id="sec-system">
     <div class="section-header">
@@ -740,7 +872,13 @@ function showToast(msg, ok) {
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const sections  = { clock: 'sec-clock', status: 'sec-status', network: 'sec-network', system: 'sec-system' };
+const sections  = {
+  clock:   'sec-clock',
+  status:  'sec-status',
+  network: 'sec-network',
+  lights:  'sec-lights',
+  system:  'sec-system'
+};
 const navItems  = document.querySelectorAll('.nav-item');
 const drawer    = document.getElementById('drawer');
 const backdrop  = document.getElementById('backdrop');
@@ -795,6 +933,35 @@ function rssiClass(r) {
   return 'err';
 }
 
+// ── Apply LED data ─────────────────────────────────────────────────────────────
+function applyLeds(leds) {
+  if (!leds) return;
+
+  function applyStrip(strip, effectId, swatchId, brightId, barId) {
+    if (!strip) return;
+    const el = document.getElementById(effectId);
+    if (el) el.textContent = strip.effect || '--';
+
+    const sw = document.getElementById(swatchId);
+    if (sw) sw.style.background = 'rgb(' + (strip.r||0) + ',' + (strip.g||0) + ',' + (strip.b||0) + ')';
+
+    const pct = Math.round((strip.brightness || 0) / 255 * 100);
+    const brightEl = document.getElementById(brightId);
+    if (brightEl) brightEl.textContent = pct + '%';
+    const bar = document.getElementById(barId);
+    if (bar) bar.style.width = pct + '%';
+  }
+
+  applyStrip(leds.strip1, 'sv-led1-effect', 'sv-led1-swatch', 'sv-led1-bright', 'sv-led1-bar');
+  applyStrip(leds.strip2, 'sv-led2-effect', 'sv-led2-swatch', 'sv-led2-bright', 'sv-led2-bar');
+
+  // Highlight active effect button
+  const activeEffect = leds.strip1 ? leds.strip1.effect : null;
+  document.querySelectorAll('#effect-btn-grid [data-effect]').forEach(btn => {
+    btn.classList.toggle('active-effect', btn.dataset.effect === activeEffect);
+  });
+}
+
 // ── Apply JSON data to all stat elements ──────────────────────────────────────
 function applyData(d) {
   // Header live time (fallback if WS lag)
@@ -823,7 +990,7 @@ function applyData(d) {
   }
 
   if (d.iana_tz !== undefined) {
-    const tz = d.iana_tz || '—';
+    const tz = d.iana_tz || '\u2014';
     setVal('sv-iana-tz',  tz, 'accent');
     setVal('sv-iana-tz2', tz, 'accent');
     setVal('sv-geo-tz',   tz, 'accent');
@@ -846,19 +1013,22 @@ function applyData(d) {
     const v = boolVal(d.wifi, 'Connected', 'Disconnected', 'ok', 'err');
     setVal('sv-wifi-status', v.text, v.cls);
   }
-  if (d.ssid !== undefined)     setVal('sv-ssid',     d.ssid     || '—', 'accent');
+  if (d.ssid !== undefined)     setVal('sv-ssid',     d.ssid     || '\u2014', 'accent');
   if (d.rssi !== undefined)     setVal('sv-rssi',     d.rssi + ' dBm', rssiClass(d.rssi));
-  if (d.local_ip !== undefined) setVal('sv-local-ip', d.local_ip || '—', 'accent');
-  if (d.gateway !== undefined)  setVal('sv-gateway',  d.gateway  || '—', '');
+  if (d.local_ip !== undefined) setVal('sv-local-ip', d.local_ip || '\u2014', 'accent');
+  if (d.gateway !== undefined)  setVal('sv-gateway',  d.gateway  || '\u2014', '');
 
-  if (d.external_ip !== undefined) setVal('sv-ext-ip',  d.external_ip || '—', 'accent');
-  if (d.city        !== undefined) setVal('sv-city',    d.city        || '—', '');
-  if (d.region      !== undefined) setVal('sv-region',  d.region      || '—', '');
-  if (d.isp         !== undefined) setVal('sv-isp',     d.isp         || '—', '');
+  if (d.external_ip !== undefined) setVal('sv-ext-ip',  d.external_ip || '\u2014', 'accent');
+  if (d.city        !== undefined) setVal('sv-city',    d.city        || '\u2014', '');
+  if (d.region      !== undefined) setVal('sv-region',  d.region      || '\u2014', '');
+  if (d.isp         !== undefined) setVal('sv-isp',     d.isp         || '\u2014', '');
 
   // System
   if (d.uptime_s  !== undefined) setVal('sv-uptime',    fmtUptime(d.uptime_s), 'accent');
   if (d.free_heap !== undefined) setVal('sv-free-heap', fmtHeap(d.free_heap), '');
+
+  // LEDs
+  if (d.leds) applyLeds(d.leds);
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -928,6 +1098,17 @@ wsConnect();
 })();
 
 // ── Command buttons ───────────────────────────────────────────────────────────
+
+// Colour preset commands resolved client-side to set-color API call
+const COLOR_PRESETS = {
+  'led-color-white':  [255, 255, 255],
+  'led-color-warm':   [255, 180,  80],
+  'led-color-red':    [255,   0,   0],
+  'led-color-blue':   [  0,  80, 255],
+  'led-color-green':  [  0, 220,  50],
+  'led-color-purple': [180,   0, 255],
+};
+
 function sendCmd(cmd, btn) {
   const allBtns = document.querySelectorAll('[data-cmd]');
   allBtns.forEach(b => b.disabled = true);
@@ -935,10 +1116,15 @@ function sendCmd(cmd, btn) {
   const origHTML = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span> ' + origHTML;
 
+  // Colour presets use the same /api/cmd endpoint with an rgb payload
+  const body = COLOR_PRESETS[cmd]
+    ? { cmd: 'led-color', r: COLOR_PRESETS[cmd][0], g: COLOR_PRESETS[cmd][1], b: COLOR_PRESETS[cmd][2] }
+    : { cmd };
+
   fetch('/api/cmd', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ cmd }),
+    body:    JSON.stringify(body),
   })
   .then(r => r.json())
   .then(d => {

@@ -1,7 +1,7 @@
 idf_component_register(
-    SRCS "webserver.cpp"
+    SRCS "led_manager.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES esp_http_server clock_manager networking led json freertos log esp_timer
+    REQUIRES espressif__led_strip driver freertos log esp_timer
 )
 
 set(CMAKE_CXX_STANDARD 17)

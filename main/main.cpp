@@ -59,6 +59,7 @@
 #include "encoder.h"
 #include "menu.h"
 #include "webserver.h"
+#include "led_manager.h"
 
 static const char* TAG = "main";
 
@@ -84,7 +85,8 @@ static Display       s_display;
 static SeesawDevice  s_seesaw;
 static RotaryEncoder s_encoder(s_seesaw);
 static Menu          s_menu(s_display);
-static WebServer     s_webserver(s_clock, s_net);
+static LedManager    s_leds(GPIO_NUM_1, GPIO_NUM_2, 30);
+static WebServer     s_webserver(s_clock, s_net, s_leds);
 
 // Set true only after seesaw.begin() AND encoder.init() both succeed.
 // All encoder I2C callers check this before touching hardware.
@@ -124,7 +126,6 @@ static void encoder_task(void* /*arg*/)
     bool     btn_last         = false;
     uint32_t btn_press_tick   = 0;
     bool     long_press_fired = false;
-    uint32_t diag_tick        = 0;   // for rate-limited diagnostics
 
     SemaphoreHandle_t mtx = s_display.getBusMutex();
 
@@ -139,12 +140,6 @@ static void encoder_task(void* /*arg*/)
             btn_now = s_encoder.button_pressed();
             xSemaphoreGive(mtx);
 
-            // Diagnostic: log raw values every 2s so we can see if reads work
-            uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-            if (now - diag_tick >= 2000) {
-                diag_tick = now;
-                ESP_LOGI("enc_diag", "delta=%d btn=%d", delta, (int)btn_now);
-            }
         }
 
         // ── Rotation ──────────────────────────────────────────────────────────
@@ -246,12 +241,19 @@ extern "C" void app_main()
         }
     }
 
+    // ── 2b. LED strips ────────────────────────────────────────────────────────
+    ESP_LOGI(TAG, "Initialising LED strips...");
+    if (s_leds.init() != ESP_OK) {
+        ESP_LOGW(TAG, "LED strip init failed — continuing without LEDs");
+    }
+    s_leds.start();
+
     // ── 3. Menu — wire dismiss, then build full tree ──────────────────────────
     // dismiss_fn polls the encoder directly (with mutex) so it works even
     // while encoder_task is blocked inside wait_for_dismiss.
     s_menu.set_dismiss_fn(dismiss_fn);
     ESP_LOGI(TAG, "Building menu...");
-    s_menu.build(s_clock, s_net);
+    s_menu.build(s_clock, s_net, s_leds);
 
     // ── 4. Networking — async WiFi + SNTP + geolocation ──────────────────────
     s_net.set_wifi_credentials(WIFI_SSID, WIFI_PASSWORD);

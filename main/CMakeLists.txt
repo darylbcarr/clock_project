@@ -11,6 +11,7 @@ idf_component_register(
         display
         encoder
         menu
+        led
         webserver
         driver
         freertos

@@ -107,7 +107,7 @@ static void do_help()
         "  status                  Print clock manager status\r\n"
         "  sync-status             Show time sync / SNTP state\r\n"
         "  net-status              Show network status (IP, geo, RSSI, etc.)\r\n"
-        "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
+        // "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
         "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  help                    Show this list\r\n"
@@ -269,28 +269,28 @@ static void dispatch(char* line)
         uart_printf("%s\r\n", s_clock->format_time(fmt).c_str());
         return;
     }
-    if (strcmp(cmd, "enc-test") == 0) {
-        if (!s_encoder || !s_bus_mutex) {
-            uart_puts("Encoder not available.\r\n");
-            return;
-        }
-        int n = (argc >= 2) ? atoi(argv[1]) : 100;
-        uart_printf("Polling encoder %d times (50ms interval)...\r\n", n);
-        uart_puts("  [pos_raw] [delta] [btn]\r\n");
-            int32_t last_pos = 0;
-        for (int i = 0; i < n; i++) {
-            xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
-            int8_t delta = s_encoder->read_delta();
-            bool   btn   = s_encoder->button_pressed();
-            xSemaphoreGive(s_bus_mutex);
-            // Also read raw position for diagnostics
-            // (read_delta already updated last_pos_ internally)
-            uart_printf("  delta=%-3d  btn=%d\r\n", (int)delta, (int)btn);
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        uart_puts("enc-test done.\r\n");
-        return;
-    }
+    // if (strcmp(cmd, "enc-test") == 0) {
+    //     if (!s_encoder || !s_bus_mutex) {
+    //         uart_puts("Encoder not available.\r\n");
+    //         return;
+    //     }
+    //     int n = (argc >= 2) ? atoi(argv[1]) : 100;
+    //     uart_printf("Polling encoder %d times (50ms interval)...\r\n", n);
+    //     uart_puts("  [pos_raw] [delta] [btn]\r\n");
+    //         int32_t last_pos = 0;
+    //     for (int i = 0; i < n; i++) {
+    //         xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+    //         int8_t delta = s_encoder->read_delta();
+    //         bool   btn   = s_encoder->button_pressed();
+    //         xSemaphoreGive(s_bus_mutex);
+    //         // Also read raw position for diagnostics
+    //         // (read_delta already updated last_pos_ internally)
+    //         uart_printf("  delta=%-3d  btn=%d\r\n", (int)delta, (int)btn);
+    //         vTaskDelay(pdMS_TO_TICKS(50));
+    //     }
+    //     uart_puts("enc-test done.\r\n");
+    //     return;
+    // }
     if (strcmp(cmd, "i2c-scan") == 0) {
         do_i2c_scan();
         return;
