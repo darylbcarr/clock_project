@@ -18,3 +18,20 @@ CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
 
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ── Partition table ───────────────────────────────────────────────────────────
+# Custom partition table with OTA (ota_0 / ota_1) and FAT storage.
+# Two layouts are defined in partitions.csv — comment/uncomment as needed:
+#   Production (16 MB flash):  active by default
+#   Development (32 MB flash): swap the commented blocks in partitions.csv
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Flash size — must match the active layout in partitions.csv.
+# Production device: 16 MB   → CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# Development device: 32 MB  → change to CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# OTA support — required for ota_0/ota_1 partition scheme
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n

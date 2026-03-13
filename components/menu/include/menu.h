@@ -4,6 +4,9 @@
 #include <functional>
 #include <memory>
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 class Display;
 
@@ -117,4 +120,13 @@ private:
 
     // Blocks until dismiss_fn_ fires or 30s timeout
     void wait_for_dismiss();
+
+    // Async action dispatch — posts cb to action_task so encoder_task stays free.
+    // If an action is already queued or running the new request is silently dropped.
+    void post_action(MenuItem::Callback cb);
+    static void action_task_fn(void* arg);
+
+    SemaphoreHandle_t action_sem_         = nullptr;  // 1 = slot free
+    QueueHandle_t     action_queue_       = nullptr;  // depth 1
+    TaskHandle_t      action_task_handle_ = nullptr;
 };

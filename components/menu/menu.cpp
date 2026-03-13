@@ -67,7 +67,13 @@ void MenuItem::execute() const {
 // ── Menu core ─────────────────────────────────────────────────────────────────
 
 Menu::Menu(Display& display)
-    : display_(display) {}
+    : display_(display)
+{
+    action_sem_   = xSemaphoreCreateBinary();
+    xSemaphoreGive(action_sem_);   // start available
+    action_queue_ = xQueueCreate(1, sizeof(MenuItem::Callback*));
+    xTaskCreate(action_task_fn, "menu_act", 4096, this, 3, &action_task_handle_);
+}
 
 void Menu::next() {
     if (!current_menu_) return;
@@ -258,6 +264,41 @@ void Menu::show_info_screen(ClockManager& cm, Networking& net) {
     render();
 }
 
+// ── Async action dispatch ─────────────────────────────────────────────────────
+// Slow motor callbacks (Set Time, Advance) are posted here so they run on
+// action_task and encoder_task stays responsive during motor movement.
+// The semaphore ensures at most one action is queued or running at a time;
+// extra presses are silently discarded.
+
+void Menu::post_action(MenuItem::Callback cb)
+{
+    if (xSemaphoreTake(action_sem_, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Action already running — request discarded");
+        return;
+    }
+    auto* cb_ptr = new MenuItem::Callback(std::move(cb));
+    if (xQueueSend(action_queue_, &cb_ptr, 0) != pdTRUE) {
+        delete cb_ptr;
+        xSemaphoreGive(action_sem_);
+    }
+}
+
+void Menu::action_task_fn(void* arg)
+{
+    Menu* self = static_cast<Menu*>(arg);
+    MenuItem::Callback* cb_ptr = nullptr;
+    while (true) {
+        if (xQueueReceive(self->action_queue_, &cb_ptr, portMAX_DELAY) == pdTRUE) {
+            if (cb_ptr) {
+                (*cb_ptr)();
+                delete cb_ptr;
+                cb_ptr = nullptr;
+            }
+            xSemaphoreGive(self->action_sem_);
+        }
+    }
+}
+
 // ── build() — full menu tree with wired callbacks ────────────────────────────
 
 void Menu::build(ClockManager& cm, Networking& net) {
@@ -267,12 +308,12 @@ void Menu::build(ClockManager& cm, Networking& net) {
     // ── Clock ─────────────────────────────────────────────────────────────────
     auto clk = std::make_unique<MenuItem>("Clock");
 
-    clk->addChild(std::make_unique<MenuItem>("Set Time", [&cm]() {
-        cm.cmd_set_time(-1);
+    clk->addChild(std::make_unique<MenuItem>("Set Time", [this, &cm]() {
+        post_action([&cm]() { cm.cmd_set_time(-1); });
     }));
 
-    clk->addChild(std::make_unique<MenuItem>("Advance 1Min", [&cm]() {
-        cm.cmd_test_advance();
+    clk->addChild(std::make_unique<MenuItem>("Advance 1Min", [this, &cm]() {
+        post_action([&cm]() { cm.cmd_test_advance(); });
     }));
 
     clk->addChild(std::make_unique<MenuItem>("Step Fwd", [&cm]() {
