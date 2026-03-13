@@ -280,7 +280,7 @@ extern "C" void app_main()
     xTaskCreate(encoder_task,     "encoder_poll", 3072, nullptr, 4, nullptr);
 
     // ── 8. Blank timer task (priority 2) ─────────────────────────────────────
-    xTaskCreate(blank_timer_task, "blank_timer",  2048, nullptr, 2, nullptr);
+    xTaskCreate(blank_timer_task, "blank_timer",  3072, nullptr, 2, nullptr);
 
     // ── 9. Splash → menu ─────────────────────────────────────────────────────
     s_display.clear();
