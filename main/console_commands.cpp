@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cstdlib>
 #include "driver/uart.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,10 +25,11 @@ static constexpr int          CONSOLE_RX_BUF  = 512;
 static constexpr int          CONSOLE_LINE_MAX = 128;
 
 // ── Module-level pointers ─────────────────────────────────────────────────────
-static ClockManager*     s_clock     = nullptr;
-static Networking*       s_net       = nullptr;
-static RotaryEncoder*    s_encoder   = nullptr;
-static SemaphoreHandle_t s_bus_mutex = nullptr;
+static ClockManager*           s_clock      = nullptr;
+static Networking*             s_net        = nullptr;
+static RotaryEncoder*          s_encoder    = nullptr;
+static SemaphoreHandle_t       s_bus_mutex  = nullptr;
+static i2c_master_bus_handle_t s_bus_handle = nullptr;
 
 // ── UART helpers ──────────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ static void do_help()
         "  sync-status             Show time sync / SNTP state\r\n"
         "  net-status              Show network status (IP, geo, RSSI, etc.)\r\n"
         "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
+        "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  help                    Show this list\r\n"
     );
@@ -158,6 +161,45 @@ static void do_net_status()
                     s_clock->format_time("%Y-%m-%dT%H:%M:%S %Z").c_str());
     }
     uart_puts(  "─────────────────────────────────────────────────────\r\n");
+}
+
+// ── I2C bus scan ──────────────────────────────────────────────────────────────
+
+static void do_i2c_scan()
+{
+    if (!s_bus_handle) { uart_puts("I2C bus handle not available.\r\n"); return; }
+
+    uart_puts("\r\nScanning I2C bus (0x01–0x7F)...\r\n");
+    uart_puts("     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\r\n");
+
+    int found = 0;
+    xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+    for (int row = 0; row < 8; row++) {
+        uart_printf("%02X: ", row << 4);
+        for (int col = 0; col < 16; col++) {
+            uint8_t addr = (uint8_t)((row << 4) | col);
+            if (addr < 0x04 || addr > 0x77) {
+                // Reserved addresses — skip without probing
+                uart_puts("   ");
+                continue;
+            }
+            esp_err_t ret = i2c_master_probe(s_bus_handle, addr, 10);
+            if (ret == ESP_OK) {
+                uart_printf("%02X ", addr);
+                found++;
+            } else {
+                uart_puts("-- ");
+            }
+        }
+        uart_puts("\r\n");
+    }
+    xSemaphoreGive(s_bus_mutex);
+
+    if (found == 0) {
+        uart_puts("No devices found.\r\n");
+    } else {
+        uart_printf("%d device(s) found.\r\n", found);
+    }
 }
 
 // ── Command dispatch ──────────────────────────────────────────────────────────
@@ -249,6 +291,10 @@ static void dispatch(char* line)
         uart_puts("enc-test done.\r\n");
         return;
     }
+    if (strcmp(cmd, "i2c-scan") == 0) {
+        do_i2c_scan();
+        return;
+    }
     if (strcmp(cmd, "help") == 0) {
         do_help();
         return;
@@ -273,15 +319,17 @@ static void console_task(void* /*arg*/)
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-void console_start(ClockManager*     clock_mgr,
-                   Networking*       net,
-                   RotaryEncoder*    encoder,
-                   SemaphoreHandle_t bus_mutex)
+void console_start(ClockManager*           clock_mgr,
+                   Networking*             net,
+                   RotaryEncoder*          encoder,
+                   SemaphoreHandle_t       bus_mutex,
+                   i2c_master_bus_handle_t bus_handle)
 {
-    s_clock     = clock_mgr;
-    s_net       = net;
-    s_encoder   = encoder;
-    s_bus_mutex = bus_mutex;
+    s_clock      = clock_mgr;
+    s_net        = net;
+    s_encoder    = encoder;
+    s_bus_mutex  = bus_mutex;
+    s_bus_handle = bus_handle;
 
     uart_config_t cfg = {};
     cfg.baud_rate  = CONSOLE_BAUD;

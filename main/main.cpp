@@ -220,12 +220,15 @@ extern "C" void app_main()
     s_display.print(4, " Please wait...");
 
     // ── 2. Encoder — shares Display's bus handle (same physical I2C bus) ─────
-    // The ssd1306_init() call inside Display::init() leaves the bus's internal
-    // status register in a non-idle state after its transactions complete.
-    // probe_bus() fires a single i2c_master_probe() which resets bus->status
-    // to I2C_STATUS_DONE — required before registering a second device.
+    // After the display writes above the I2C bus->status may be non-idle.
+    // Probe the display address (0x3C) — guaranteed ACK — to reset bus->status
+    // to I2C_STATUS_DONE before adding a second device.  Probing SEESAW_ADDR
+    // here is counterproductive: the SAMD09 may still be booting (no ACK),
+    // which leaves bus->status in an unknown state rather than resetting it.
     ESP_LOGI(TAG, "Settling I2C bus before encoder registration...");
-    s_display.probe_bus(SEESAW_ADDR);   // reset bus state; NACK is fine
+    esp_err_t probe_ret = s_display.probe_bus(0x3C);  // probe display (ACKs) → reset bus->status
+    ESP_LOGI(TAG, "Bus probe (0x3C): %s", esp_err_to_name(probe_ret));
+    vTaskDelay(pdMS_TO_TICKS(500));     // give SAMD09 time to complete boot
 
     ESP_LOGI(TAG, "Initialising encoder...");
     esp_err_t ret = s_seesaw.begin(s_display.getBusHandle(), SEESAW_ADDR, SEESAW_HZ);
@@ -258,7 +261,8 @@ extern "C" void app_main()
     // ── 5. UART console ───────────────────────────────────────────────────────
     console_start(&s_clock, &s_net,
                   s_encoder_ok ? &s_encoder : nullptr,
-                  s_display.getBusMutex());
+                  s_display.getBusMutex(),
+                  s_display.getBusHandle());
 
     // ── 6. Sensor calibration + clock tick task ───────────────────────────────
     ESP_LOGI(TAG, "Calibrating sensor...");
