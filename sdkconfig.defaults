@@ -35,3 +35,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
 # OTA support — required for ota_0/ota_1 partition scheme
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+
+# WebSocket support for the HTTP server
+CONFIG_HTTPD_WS_SUPPORT=y

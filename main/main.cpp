@@ -58,6 +58,7 @@
 #include "display.h"
 #include "encoder.h"
 #include "menu.h"
+#include "webserver.h"
 
 static const char* TAG = "main";
 
@@ -83,6 +84,7 @@ static Display       s_display;
 static SeesawDevice  s_seesaw;
 static RotaryEncoder s_encoder(s_seesaw);
 static Menu          s_menu(s_display);
+static WebServer     s_webserver(s_clock, s_net);
 
 // Set true only after seesaw.begin() AND encoder.init() both succeed.
 // All encoder I2C callers check this before touching hardware.
@@ -257,6 +259,9 @@ extern "C" void app_main()
         s_net.set_timezone_override(TZ_OVERRIDE);
     }
     s_net.begin();
+
+    // ── 4a. Web server — starts HTTP + WebSocket on port 80 ──────────────────
+    s_webserver.start();
 
     // ── 5. UART console ───────────────────────────────────────────────────────
     console_start(&s_clock, &s_net,
