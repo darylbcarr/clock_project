@@ -1,9 +1,8 @@
 /**
  * @file console_commands.cpp
- * @brief Simple UART line-oriented command shell
+ * @brief UART line-oriented command shell
  *
- * No esp_console / argtable3 dependency.  Uses only driver/uart.h which is
- * part of the core ESP-IDF build and never needs a managed component.
+ * Uses only driver/uart.h — no esp_console / argtable3 managed components.
  */
 
 #include "console_commands.h"
@@ -12,7 +11,6 @@
 #include <cstring>
 #include <cstdlib>
 #include "driver/uart.h"
-#include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,14 +23,27 @@ static constexpr int          CONSOLE_BAUD    = 115200;
 static constexpr int          CONSOLE_RX_BUF  = 512;
 static constexpr int          CONSOLE_LINE_MAX = 128;
 
-// ── Module-level clock pointer ────────────────────────────────────────────────
-static ClockManager* s_clock = nullptr;
+// ── Module-level pointers ─────────────────────────────────────────────────────
+static ClockManager*     s_clock     = nullptr;
+static Networking*       s_net       = nullptr;
+static RotaryEncoder*    s_encoder   = nullptr;
+static SemaphoreHandle_t s_bus_mutex = nullptr;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── UART helpers ──────────────────────────────────────────────────────────────
 
 static void uart_puts(const char* s)
 {
     uart_write_bytes(CONSOLE_UART, s, strlen(s));
+}
+
+static void uart_printf(const char* fmt, ...)
+{
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    uart_puts(buf);
 }
 
 static void prompt()
@@ -40,30 +51,19 @@ static void prompt()
     uart_puts("\r\nclock> ");
 }
 
-// Read one '\n'-terminated line from UART into buf (max len-1 chars).
-// Echos characters back.  Returns number of chars in buf (excluding '\0').
 static int read_line(char* buf, int len)
 {
     int pos = 0;
     buf[0]  = '\0';
-
     while (pos < len - 1) {
         uint8_t c;
         int n = uart_read_bytes(CONSOLE_UART, &c, 1, portMAX_DELAY);
         if (n <= 0) continue;
-
-        if (c == '\r' || c == '\n') {
-            uart_write_bytes(CONSOLE_UART, "\r\n", 2);
-            break;
-        }
-        if (c == 0x7F || c == 0x08) {  // backspace / DEL
-            if (pos > 0) {
-                --pos;
-                uart_puts("\b \b");
-            }
+        if (c == '\r' || c == '\n') { uart_write_bytes(CONSOLE_UART, "\r\n", 2); break; }
+        if (c == 0x7F || c == 0x08) {
+            if (pos > 0) { --pos; uart_puts("\b \b"); }
             continue;
         }
-        // Echo printable chars only
         if (c >= 0x20 && c < 0x7F) {
             uart_write_bytes(CONSOLE_UART, (char*)&c, 1);
             buf[pos++] = (char)c;
@@ -73,7 +73,23 @@ static int read_line(char* buf, int len)
     return pos;
 }
 
-// ── Command handlers ──────────────────────────────────────────────────────────
+// ── Tokeniser ─────────────────────────────────────────────────────────────────
+
+static int tokenise(char* buf, char* argv[], int max_argc)
+{
+    int argc = 0;
+    char* p  = buf;
+    while (*p && argc < max_argc) {
+        while (*p == ' ') ++p;
+        if (!*p) break;
+        argv[argc++] = p;
+        while (*p && *p != ' ') ++p;
+        if (*p) *p++ = '\0';
+    }
+    return argc;
+}
+
+// ── Help ──────────────────────────────────────────────────────────────────────
 
 static void do_help()
 {
@@ -82,31 +98,69 @@ static void do_help()
         "  calibrate               Measure dark baseline, set sensor threshold\r\n"
         "  measure                 Print average sensor ADC reading\r\n"
         "  set-offset <seconds>    Sensor-to-hour offset in seconds\r\n"
-        "  set-time [<minute>]     Move hand to match SNTP time (0-59)\r\n"
+        "  set-clock <HH> <MM>     Manually set system time (bypasses SNTP)\r\n"
+        "  set-time [<minute>]     Move hand to match system time (0-59)\r\n"
         "  microstep <n> [fwd|bwd] Fine-adjust hand by N half-steps\r\n"
         "  advance                 Force one test minute advance\r\n"
-        "  status                  Print full system status\r\n"
-        "  time [<fmt>]            Print time (optional strftime format)\r\n"
+        "  status                  Print clock manager status\r\n"
+        "  sync-status             Show time sync / SNTP state\r\n"
+        "  net-status              Show network status (IP, geo, RSSI, etc.)\r\n"
+        "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
+        "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  help                    Show this list\r\n"
     );
 }
 
-// Tokenise buf in-place.  argv[] points into buf.  Returns argc.
-static int tokenise(char* buf, char* argv[], int max_argc)
+// ── net-status printer ────────────────────────────────────────────────────────
+
+static void do_net_status()
 {
-    int argc = 0;
-    char* p  = buf;
-    while (*p && argc < max_argc) {
-        // skip spaces
-        while (*p == ' ') ++p;
-        if (!*p) break;
-        argv[argc++] = p;
-        // find end of token
-        while (*p && *p != ' ') ++p;
-        if (*p) *p++ = '\0';
+    if (!s_net) { uart_puts("Networking not available.\r\n"); return; }
+
+    const NetStatus& s = s_net->get_status();
+
+    uart_puts("\r\n──── Network Status ──────────────────────────────────\r\n");
+
+    // WiFi
+    uart_printf("  WiFi connected : %s\r\n", s.wifi_connected ? "YES" : "NO");
+    if (s.wifi_connected) {
+        uart_printf("  SSID           : %s\r\n", s.ssid);
+        uart_printf("  RSSI           : %d dBm\r\n", (int)s.rssi);
+        uart_printf("  Local IP       : %s\r\n", s.local_ip);
+        uart_printf("  Gateway        : %s\r\n", s.gateway);
+        uart_printf("  Netmask        : %s\r\n", s.netmask);
+        uart_printf("  DNS            : %s\r\n", s.dns_primary);
     }
-    return argc;
+
+    // Geolocation
+    uart_puts(  "  ─────────────────────────────────────────────────────\r\n");
+    if (s.external_ip[0]) {
+        uart_printf("  External IP    : %s\r\n", s.external_ip);
+        uart_printf("  Location       : %s, %s, %s (%s)\r\n",
+                    s.city, s.region, s.country, s.country_code);
+        uart_printf("  Coordinates    : %.4f, %.4f\r\n",
+                    s.latitude, s.longitude);
+        uart_printf("  ISP            : %s\r\n", s.isp);
+        uart_printf("  IANA timezone  : %s\r\n", s.iana_tz);
+        uart_printf("  POSIX TZ       : %s\r\n", s.posix_tz);
+    } else {
+        uart_puts("  Geolocation    : not yet available\r\n");
+        if (s.posix_tz[0]) {
+            uart_printf("  POSIX TZ       : %s  (manual override)\r\n", s.posix_tz);
+        }
+    }
+
+    // SNTP
+    uart_puts(  "  ─────────────────────────────────────────────────────\r\n");
+    uart_printf("  SNTP synced    : %s\r\n", s.sntp_synced ? "YES" : "NO");
+    if (s.sntp_synced) {
+        uart_printf("  System time    : %s\r\n",
+                    s_clock->format_time("%Y-%m-%dT%H:%M:%S %Z").c_str());
+    }
+    uart_puts(  "─────────────────────────────────────────────────────\r\n");
 }
+
+// ── Command dispatch ──────────────────────────────────────────────────────────
 
 static void dispatch(char* line)
 {
@@ -118,37 +172,33 @@ static void dispatch(char* line)
 
     const char* cmd = argv[0];
 
-    // ── calibrate ─────────────────────────────────────────────────────────────
     if (strcmp(cmd, "calibrate") == 0) {
         s_clock->cmd_calibrate_sensor();
         return;
     }
-
-    // ── measure ───────────────────────────────────────────────────────────────
     if (strcmp(cmd, "measure") == 0) {
         int avg = s_clock->cmd_measure_sensor_average();
-        char tmp[64];
-        snprintf(tmp, sizeof(tmp), "Sensor avg: %d\r\n", avg);
-        uart_puts(tmp);
+        uart_printf("Sensor avg: %d\r\n", avg);
         return;
     }
-
-    // ── set-offset <seconds> ─────────────────────────────────────────────────
     if (strcmp(cmd, "set-offset") == 0) {
         if (argc < 2) { uart_puts("Usage: set-offset <seconds>\r\n"); return; }
-        int sec = atoi(argv[1]);
-        s_clock->cmd_set_sensor_offset(sec);
+        s_clock->cmd_set_sensor_offset(atoi(argv[1]));
         return;
     }
-
-    // ── set-time [<minute>] ───────────────────────────────────────────────────
+    if (strcmp(cmd, "set-clock") == 0) {
+        if (argc < 3) { uart_puts("Usage: set-clock <hour> <minute>\r\n"); return; }
+        int hh = atoi(argv[1]);
+        int mm = atoi(argv[2]);
+        int ss = (argc >= 4) ? atoi(argv[3]) : 0;
+        s_clock->cmd_set_manual_time(hh, mm, ss);
+        return;
+    }
     if (strcmp(cmd, "set-time") == 0) {
         int cur_min = (argc >= 2) ? atoi(argv[1]) : -1;
         s_clock->cmd_set_time(cur_min);
         return;
     }
-
-    // ── microstep <n> [fwd|bwd] ───────────────────────────────────────────────
     if (strcmp(cmd, "microstep") == 0) {
         if (argc < 2) { uart_puts("Usage: microstep <steps> [fwd|bwd]\r\n"); return; }
         int  steps   = atoi(argv[1]);
@@ -156,29 +206,49 @@ static void dispatch(char* line)
         s_clock->cmd_microstep(steps, forward);
         return;
     }
-
-    // ── advance ───────────────────────────────────────────────────────────────
     if (strcmp(cmd, "advance") == 0) {
         s_clock->cmd_test_advance();
         return;
     }
-
-    // ── status ────────────────────────────────────────────────────────────────
     if (strcmp(cmd, "status") == 0) {
         s_clock->cmd_status();
         return;
     }
-
-    // ── time [<fmt>] ──────────────────────────────────────────────────────────
-    if (strcmp(cmd, "time") == 0) {
-        const char* fmt = (argc >= 2) ? argv[1] : "%Y-%m-%dT%H:%M:%S";
-        std::string t   = s_clock->format_time(fmt);
-        uart_puts(t.c_str());
-        uart_puts("\r\n");
+    if (strcmp(cmd, "sync-status") == 0) {
+        s_clock->cmd_sync_status();
         return;
     }
-
-    // ── help ──────────────────────────────────────────────────────────────────
+    if (strcmp(cmd, "net-status") == 0) {
+        do_net_status();
+        return;
+    }
+    if (strcmp(cmd, "time") == 0) {
+        const char* fmt = (argc >= 2) ? argv[1] : "%Y-%m-%dT%H:%M:%S";
+        uart_printf("%s\r\n", s_clock->format_time(fmt).c_str());
+        return;
+    }
+    if (strcmp(cmd, "enc-test") == 0) {
+        if (!s_encoder || !s_bus_mutex) {
+            uart_puts("Encoder not available.\r\n");
+            return;
+        }
+        int n = (argc >= 2) ? atoi(argv[1]) : 100;
+        uart_printf("Polling encoder %d times (50ms interval)...\r\n", n);
+        uart_puts("  [pos_raw] [delta] [btn]\r\n");
+            int32_t last_pos = 0;
+        for (int i = 0; i < n; i++) {
+            xSemaphoreTake(s_bus_mutex, portMAX_DELAY);
+            int8_t delta = s_encoder->read_delta();
+            bool   btn   = s_encoder->button_pressed();
+            xSemaphoreGive(s_bus_mutex);
+            // Also read raw position for diagnostics
+            // (read_delta already updated last_pos_ internally)
+            uart_printf("  delta=%-3d  btn=%d\r\n", (int)delta, (int)btn);
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        uart_puts("enc-test done.\r\n");
+        return;
+    }
     if (strcmp(cmd, "help") == 0) {
         do_help();
         return;
@@ -187,15 +257,13 @@ static void dispatch(char* line)
     uart_puts("Unknown command. Type 'help' for a list.\r\n");
 }
 
-// ── UART shell task ───────────────────────────────────────────────────────────
+// ── Console task ──────────────────────────────────────────────────────────────
 
 static void console_task(void* /*arg*/)
 {
     char line[CONSOLE_LINE_MAX];
-
     uart_puts("\r\n=== Clock console ready. Type 'help' for commands. ===\r\n");
     prompt();
-
     while (true) {
         read_line(line, sizeof(line));
         dispatch(line);
@@ -205,11 +273,16 @@ static void console_task(void* /*arg*/)
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-void console_start(ClockManager* clock_mgr)
+void console_start(ClockManager*     clock_mgr,
+                   Networking*       net,
+                   RotaryEncoder*    encoder,
+                   SemaphoreHandle_t bus_mutex)
 {
-    s_clock = clock_mgr;
+    s_clock     = clock_mgr;
+    s_net       = net;
+    s_encoder   = encoder;
+    s_bus_mutex = bus_mutex;
 
-    // Install UART driver with RX ring buffer; no TX buffer (blocking writes).
     uart_config_t cfg = {};
     cfg.baud_rate  = CONSOLE_BAUD;
     cfg.data_bits  = UART_DATA_8_BITS;

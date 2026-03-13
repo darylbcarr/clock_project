@@ -12,5 +12,9 @@ CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 # ADC / GPIO
 CONFIG_ADC_SUPPRESS_DEPRECATE_WARN=y
 
+# Allow new and legacy I2C drivers to coexist (Display uses new driver,
+# Encoder seesaw shares the same bus via new driver's bus handle)
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
+
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

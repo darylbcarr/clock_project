@@ -1,20 +1,13 @@
 idf_component_register(
-    SRCS
-        "main.cpp"
-        "console_commands.cpp"
-    INCLUDE_DIRS
-        "."
+    SRCS "menu.cpp"
+    INCLUDE_DIRS "include"
     REQUIRES
-        clock_manager
-        stepper_motor
-        networking
         display
-        encoder
-        menu
-        driver
+        clock_manager
+        networking
+        esp_timer
         freertos
         log
-        nvs_flash
 )
 
 set(CMAKE_CXX_STANDARD 17)

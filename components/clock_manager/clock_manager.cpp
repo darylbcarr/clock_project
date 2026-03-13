@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <sys/time.h>   // settimeofday()
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -238,6 +239,7 @@ void ClockManager::cmd_set_time(int current_displayed_minute)
 {
     if (!time_valid_) {
         ESP_LOGW(TAG, "cmd_set_time: time not yet valid (SNTP not synced)");
+        ESP_LOGW(TAG, "  → Use 'set-clock <HH> <MM>' to set time manually for testing");
         return;
     }
 
@@ -261,7 +263,6 @@ void ClockManager::cmd_set_time(int current_displayed_minute)
         motor_.move_clock_minutes(delta);
         displayed_minute_ = target_minute;
     } else {
-        // Backward move
         motor_.move_steps(std::abs(delta) * STEPS_PER_CLOCK_MINUTE,
                           StepDirection::BACKWARD);
         displayed_minute_ = target_minute;
@@ -269,6 +270,74 @@ void ClockManager::cmd_set_time(int current_displayed_minute)
 
     xSemaphoreGive(mutex_);
     ESP_LOGI(TAG, "cmd_set_time: hand set to minute %d", displayed_minute_);
+}
+
+void ClockManager::cmd_set_manual_time(int hour, int minute, int second)
+{
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+        second < 0 || second > 59) {
+        ESP_LOGE(TAG, "cmd_set_manual_time: invalid time %02d:%02d:%02d",
+                 hour, minute, second);
+        return;
+    }
+
+    // Build a tm from the supplied local time + today's date.
+    // We keep today's date by reading it from the current system time
+    // (which may be epoch 0 if never set — that's fine, only H:M:S matters
+    // for the clock hand logic).
+    time_t now = time(nullptr);
+    struct tm t = {};
+    localtime_r(&now, &t);
+
+    t.tm_hour = hour;
+    t.tm_min  = minute;
+    t.tm_sec  = second;
+
+    // mktime() interprets t as local time and returns UTC epoch.
+    time_t new_epoch = mktime(&t);
+    if (new_epoch == (time_t)-1) {
+        ESP_LOGE(TAG, "cmd_set_manual_time: mktime failed");
+        return;
+    }
+
+    struct timeval tv = { .tv_sec = new_epoch, .tv_usec = 0 };
+    if (settimeofday(&tv, nullptr) != 0) {
+        ESP_LOGE(TAG, "cmd_set_manual_time: settimeofday failed");
+        return;
+    }
+
+    time_valid_ = true;
+    ESP_LOGI(TAG, "Manual time set to %02d:%02d:%02d  (epoch %lld)",
+             hour, minute, second, (long long)new_epoch);
+    ESP_LOGI(TAG, "You can now run 'set-time <current_hand_minute>'");
+}
+
+void ClockManager::cmd_sync_status()
+{
+    time_t now = time(nullptr);
+    struct tm t = {};
+    localtime_r(&now, &t);
+    char tz_buf[64] = {};
+    strftime(tz_buf, sizeof(tz_buf), "%Z %z", &t);
+
+    ESP_LOGI(TAG, "──── Sync / Network Status ──────────────────────────");
+    ESP_LOGI(TAG, "  time_valid   : %s", time_valid_ ? "YES" : "NO");
+    ESP_LOGI(TAG, "  epoch        : %lld", (long long)now);
+    if (now > 1000000000LL) {   // sanity: after year 2001
+        ESP_LOGI(TAG, "  local time   : %s", time_full().c_str());
+        ESP_LOGI(TAG, "  timezone     : %s", tz_buf);
+    } else {
+        ESP_LOGI(TAG, "  local time   : (not set — epoch near zero)");
+    }
+    if (!time_valid_) {
+        ESP_LOGW(TAG, "");
+        ESP_LOGW(TAG, "  Time is not valid.  Options:");
+        ESP_LOGW(TAG, "    1) Implement WiFi in networking.cpp for SNTP sync");
+        ESP_LOGW(TAG, "    2) Run: set-clock <hour> <minute>  (manual entry)");
+        ESP_LOGW(TAG, "       e.g.  set-clock 14 35");
+        ESP_LOGW(TAG, "       Then: set-time <hand_minute>");
+    }
+    ESP_LOGI(TAG, "─────────────────────────────────────────────────────");
 }
 
 void ClockManager::cmd_microstep(int steps, bool forward)

@@ -1,0 +1,352 @@
+/**
+ * @file menu.cpp
+ * @brief Full menu system wired to ClockManager and Networking
+ *
+ * Menu structure:
+ *   Main
+ *   ├── Clock
+ *   │   ├── Set Time          (set-time using current SNTP)
+ *   │   ├── Set Clock         (manual HH:MM entry via encoder)
+ *   │   ├── Microstep Fwd     (single microstep forward)
+ *   │   ├── Microstep Bwd     (single microstep backward)
+ *   │   ├── Advance 1 Min     (test advance)
+ *   │   ├── Set Sensor Offset (adjust via encoder)
+ *   │   └── Calibrate Sensor  (run dark baseline)
+ *   ├── Status
+ *   │   ├── Clock Status      (displayed min, sensor, offsets)
+ *   │   ├── Network Status    (IP, SSID, RSSI, geo)
+ *   │   └── Time & Sync       (local time, SNTP state, TZ)
+ *   ├── Network
+ *   │   ├── Net Info          (full net-status dump)
+ *   │   └── Sync Status       (SNTP sync detail)
+ *   ├── System
+ *   │   ├── Uptime
+ *   │   └── About
+ *   └── Lights (placeholder for WS2812B)
+ *       ├── Color
+ *       └── Brightness
+ *
+ * Display blanks after 5 minutes of inactivity.
+ * Any encoder event (rotation or button) wakes it.
+ */
+
+#include "menu.h"
+#include "display.h"
+#include "clock_manager.h"
+#include "networking.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <algorithm>
+#include <cstdio>
+
+static const char* TAG = "Menu";
+
+// ── MenuItem ─────────────────────────────────────────────────────────────────
+
+MenuItem::MenuItem(const std::string& name)
+    : name_(name), parent_(nullptr), callback_(nullptr) {}
+
+MenuItem::MenuItem(const std::string& name, Callback callback)
+    : name_(name), parent_(nullptr), callback_(callback) {}
+
+void MenuItem::addChild(std::unique_ptr<MenuItem> child) {
+    child->parent_ = this;
+    children_.push_back(std::move(child));
+}
+
+void MenuItem::execute() const {
+    if (callback_) {
+        callback_();
+    } else {
+        ESP_LOGI(TAG, "No callback for: %s", name_.c_str());
+    }
+}
+
+// ── Menu core ─────────────────────────────────────────────────────────────────
+
+Menu::Menu(Display& display)
+    : display_(display) {}
+
+void Menu::next() {
+    if (!current_menu_) return;
+    if (current_selection_ < current_menu_->getChildren().size() - 1) {
+        current_selection_++;
+        updateDisplayStart();
+    }
+}
+
+void Menu::previous() {
+    if (!current_menu_) return;
+    if (current_selection_ > 0) {
+        current_selection_--;
+        updateDisplayStart();
+    }
+}
+
+void Menu::select() {
+    if (!current_menu_) return;
+    const auto& children = current_menu_->getChildren();
+    if (children.empty()) return;
+    auto* selected = children[current_selection_].get();
+    if (selected->hasChildren()) {
+        current_menu_      = selected;
+        current_selection_ = 0;
+        display_start_     = 0;
+        ESP_LOGI(TAG, "Entering: %s", selected->getName().c_str());
+    } else {
+        ESP_LOGI(TAG, "Execute: %s", selected->getName().c_str());
+        selected->execute();
+    }
+}
+
+void Menu::back() {
+    if (!current_menu_ || !current_menu_->getParent()) return;
+    current_menu_      = current_menu_->getParent();
+    current_selection_ = 0;
+    display_start_     = 0;
+}
+
+void Menu::updateDisplayStart() {
+    if (current_selection_ < display_start_) {
+        display_start_ = current_selection_;
+    } else if (current_selection_ >= display_start_ + MAX_VISIBLE_ITEMS) {
+        display_start_ = current_selection_ - MAX_VISIBLE_ITEMS + 1;
+    }
+}
+
+std::vector<std::string> Menu::getVisibleItems() const {
+    std::vector<std::string> items;
+    if (!current_menu_) return items;
+    const auto& children = current_menu_->getChildren();
+    size_t start = display_start_;
+    size_t end   = std::min(start + MAX_VISIBLE_ITEMS, children.size());
+    for (size_t i = start; i < end; i++)
+        items.push_back(children[i]->getName());
+    while (items.size() < MAX_VISIBLE_ITEMS)
+        items.emplace_back("");
+    return items;
+}
+
+void Menu::render() {
+    if (blanked_) return;
+    auto visible_items = getVisibleItems();
+    int highlight_line = (current_selection_ >= display_start_)
+                         ? (int)(current_selection_ - display_start_)
+                         : -1;
+
+    // Show breadcrumb on line 0 (using the 7th display row for context header)
+    // We prepend the current menu name as first item label
+    display_.writeLines(visible_items, highlight_line);
+}
+
+// ── Display blanking ──────────────────────────────────────────────────────────
+
+void Menu::wake() {
+    idle_seconds_ = 0;
+    if (blanked_) {
+        blanked_ = false;
+        display_.clear();
+        render();
+        ESP_LOGI(TAG, "Display woken");
+    }
+}
+
+void Menu::tick_blank_timer() {
+    if (blanked_) return;
+    if (++idle_seconds_ >= BLANK_TIMEOUT_S) {
+        blanked_ = true;
+        display_.clear();
+        ESP_LOGI(TAG, "Display blanked after %lu s idle",
+                 (unsigned long)BLANK_TIMEOUT_S);
+    }
+}
+
+// ── wait_for_dismiss ──────────────────────────────────────────────────────────
+// Spins (yielding to the scheduler) until dismiss_fn_ returns true (button
+// press edge) or until 30s timeout.  The last display line should say
+// "Press to return" so the user knows what to do.
+
+static constexpr uint32_t DISMISS_TIMEOUT_MS = 30000;
+
+void Menu::wait_for_dismiss() {
+    uint32_t elapsed = 0;
+    // Clear any stale button state by letting one poll pass first
+    if (dismiss_fn_) dismiss_fn_();
+    vTaskDelay(pdMS_TO_TICKS(200));   // debounce: ignore button still held from select press
+    elapsed += 200;
+
+    while (elapsed < DISMISS_TIMEOUT_MS) {
+        if (dismiss_fn_ && dismiss_fn_()) return;
+        vTaskDelay(pdMS_TO_TICKS(50));
+        elapsed += 50;
+    }
+    // Timed out after 30s — return anyway
+    ESP_LOGW("Menu", "wait_for_dismiss: timed out");
+}
+
+// ── Info sub-screens ──────────────────────────────────────────────────────────
+// These are blocking screens; they spin until the button is pressed,
+// then return to the caller which re-renders the menu.
+
+void Menu::show_clock_status(ClockManager& cm) {
+    char buf[20];
+    display_.clear();
+    display_.print(0, "Clock Status");
+    display_.print(1, "------------");
+    snprintf(buf, sizeof(buf), "Min: %d", cm.displayed_minute());
+    display_.print(2, buf);
+    snprintf(buf, sizeof(buf), "Offset: %ds", cm.sensor_offset_sec());
+    display_.print(3, buf);
+    display_.print(4, cm.is_time_valid() ? "SNTP: synced" : "SNTP: no sync");
+    display_.print(5, cm.time_hm().c_str());
+    display_.print(7, "Press to return");
+    wait_for_dismiss();
+    render();
+}
+
+void Menu::show_net_status(Networking& net) {
+    const NetStatus& s = net.get_status();
+    char buf[20];
+    display_.clear();
+    display_.print(0, s.wifi_connected ? "WiFi: Connected" : "WiFi: No conn");
+    if (s.wifi_connected) {
+        snprintf(buf, sizeof(buf), "%.14s", s.ssid);
+        display_.print(1, buf);
+        snprintf(buf, sizeof(buf), "RSSI:%ddBm", (int)s.rssi);
+        display_.print(2, buf);
+        snprintf(buf, sizeof(buf), "%.15s", s.local_ip);
+        display_.print(3, buf);
+        snprintf(buf, sizeof(buf), "%.15s", s.external_ip);
+        display_.print(4, buf);
+        snprintf(buf, sizeof(buf), "%.16s", s.city);
+        display_.print(5, buf);
+        snprintf(buf, sizeof(buf), "%.16s", s.iana_tz);
+        display_.print(6, buf);
+    }
+    display_.print(7, "Press to return");
+    wait_for_dismiss();
+    render();
+}
+
+void Menu::show_time_screen(ClockManager& cm) {
+    display_.clear();
+    display_.print(0, "Time & Sync");
+    display_.print(1, cm.time_hms().c_str());
+    display_.print(2, cm.date_short().c_str());
+    display_.print(3, cm.is_time_valid() ? "SNTP: synced" : "SNTP: not synced");
+    display_.print(5, "Press to return");
+    wait_for_dismiss();
+    render();
+}
+
+void Menu::show_info_screen(ClockManager& cm, Networking& net) {
+    char buf[20];
+    display_.clear();
+    display_.print(0, "About");
+    display_.print(1, "Clock Driver v1");
+    display_.print(2, "ESP32-S3");
+    uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    snprintf(buf, sizeof(buf), "Up: %luh %02lum",
+             (unsigned long)(uptime_s / 3600),
+             (unsigned long)((uptime_s % 3600) / 60));
+    display_.print(3, buf);
+    display_.print(4, net.is_connected() ? "Net: OK" : "Net: offline");
+    display_.print(5, "Press to return");
+    wait_for_dismiss();
+    render();
+}
+
+// ── build() — full menu tree with wired callbacks ────────────────────────────
+
+void Menu::build(ClockManager& cm, Networking& net) {
+
+    auto root = std::make_unique<MenuItem>("Main");
+
+    // ── Clock ─────────────────────────────────────────────────────────────────
+    auto clk = std::make_unique<MenuItem>("Clock");
+
+    clk->addChild(std::make_unique<MenuItem>("Set Time", [&cm]() {
+        cm.cmd_set_time(-1);
+    }));
+
+    clk->addChild(std::make_unique<MenuItem>("Advance 1Min", [&cm]() {
+        cm.cmd_test_advance();
+    }));
+
+    clk->addChild(std::make_unique<MenuItem>("Step Fwd", [&cm]() {
+        cm.cmd_microstep(8, true);
+    }));
+
+    clk->addChild(std::make_unique<MenuItem>("Step Bwd", [&cm]() {
+        cm.cmd_microstep(8, false);
+    }));
+
+    clk->addChild(std::make_unique<MenuItem>("Cal Sensor", [&cm]() {
+        cm.cmd_calibrate_sensor();
+    }));
+
+    clk->addChild(std::make_unique<MenuItem>("Sensor Meas", [&cm]() {
+        cm.cmd_measure_sensor_average();
+    }));
+
+    // ── Status ────────────────────────────────────────────────────────────────
+    auto stat = std::make_unique<MenuItem>("Status");
+
+    stat->addChild(std::make_unique<MenuItem>("Clock", [this, &cm]() {
+        show_clock_status(cm);
+    }));
+
+    stat->addChild(std::make_unique<MenuItem>("Network", [this, &net]() {
+        show_net_status(net);
+    }));
+
+    stat->addChild(std::make_unique<MenuItem>("Time/Sync", [this, &cm]() {
+        show_time_screen(cm);
+    }));
+
+    stat->addChild(std::make_unique<MenuItem>("About", [this, &cm, &net]() {
+        show_info_screen(cm, net);
+    }));
+
+    // ── Network ───────────────────────────────────────────────────────────────
+    auto netm = std::make_unique<MenuItem>("Network");
+
+    netm->addChild(std::make_unique<MenuItem>("Net Info", [this, &net]() {
+        show_net_status(net);
+    }));
+
+    netm->addChild(std::make_unique<MenuItem>("Sync Status", [this, &cm]() {
+        show_time_screen(cm);
+    }));
+
+    // ── Lights (placeholder for WS2812B) ─────────────────────────────────────
+    auto lights = std::make_unique<MenuItem>("Lights");
+    lights->addChild(std::make_unique<MenuItem>("Color",
+        []() { ESP_LOGI(TAG, "Lights:Color - not yet implemented"); }));
+    lights->addChild(std::make_unique<MenuItem>("Brightness",
+        []() { ESP_LOGI(TAG, "Lights:Brightness - not yet implemented"); }));
+
+    // ── System ────────────────────────────────────────────────────────────────
+    auto sys = std::make_unique<MenuItem>("System");
+
+    sys->addChild(std::make_unique<MenuItem>("Uptime", [this, &cm, &net]() {
+        show_info_screen(cm, net);
+    }));
+
+    // ── Assemble ──────────────────────────────────────────────────────────────
+    root->addChild(std::move(clk));
+    root->addChild(std::move(stat));
+    root->addChild(std::move(netm));
+    root->addChild(std::move(lights));
+    root->addChild(std::move(sys));
+
+    root_menu_         = std::move(root);
+    current_menu_      = root_menu_.get();
+    current_selection_ = 0;
+    display_start_     = 0;
+
+    ESP_LOGI(TAG, "Menu built with %zu top-level items",
+             current_menu_->getChildren().size());
+}

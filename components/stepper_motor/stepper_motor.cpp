@@ -142,9 +142,9 @@ void StepperMotor::microstep(StepDirection direction)
 {
     powered_ = true;
     step_once(direction);
-    ets_delay_us(step_delay_us_);
+    ets_delay_us(step_delay_us_);   // single step only (~2 ms) — safe to busy-wait
     // Do NOT power off — caller decides when to power off to allow rapid
-    // successive microsteps without re-energising each time.
+    // successive single microsteps without re-energising each time.
 }
 
 void StepperMotor::microstep_n(int count, StepDirection direction)
@@ -154,13 +154,15 @@ void StepperMotor::microstep_n(int count, StepDirection direction)
     ESP_LOGD(TAG, "Microstep x%d %s",
              count, direction == StepDirection::FORWARD ? "FWD" : "BWD");
 
-    // microstep_n is used for small fine-tune moves (typically < 64 steps).
-    // ets_delay_us is acceptable here; the busy-wait is at most ~130 ms at
-    // 2000 µs/step × 64 steps which is well under the 5-second WDT timeout.
-    // For larger counts, prefer move_steps() which uses vTaskDelay.
+    // Use vTaskDelay for the same reason as move_steps(): count is unbounded
+    // (user can pass any value from the console) so ets_delay_us busy-wait
+    // will starve the IDLE task and trigger the watchdog on large counts.
+    const TickType_t delay_ticks = pdMS_TO_TICKS(step_delay_us_ / 1000);
+    const TickType_t actual_delay = (delay_ticks > 0) ? delay_ticks : 1;
+
     for (int i = 0; i < count; ++i) {
         step_once(direction);
-        ets_delay_us(step_delay_us_);
+        vTaskDelay(actual_delay);
     }
     power_off();
 }

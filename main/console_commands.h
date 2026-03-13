@@ -4,48 +4,36 @@
  * @file console_commands.h
  * @brief Simple UART command shell for the clock project
  *
- * Uses only the built-in UART driver — no esp_console or argtable3 managed
- * components required.
+ * Commands (115200 baud, UART0):
  *
- * Commands (type over UART at 115200 baud):
- *
- *   calibrate
- *       Measure dark-baseline ADC value and set detection threshold.
- *
- *   measure
- *       Print the average sensor ADC reading (LED on, no hand).
- *
- *   set-offset <seconds>
- *       Record distance (seconds) between sensor trigger and top-of-hour.
- *       Positive = sensor fires N seconds before the hour.
- *
- *   set-time [<current_minute>]
- *       Move hands to match current SNTP time.
- *       <current_minute> 0-59: what the hand shows right now.
- *
- *   microstep <steps> [fwd|bwd]
- *       Fine-adjust hand by N half-steps (default direction: fwd).
- *
- *   advance
- *       Force one test minute advance without waiting 60 seconds.
- *
- *   status
- *       Print current state of the clock manager.
- *
- *   time [<fmt>]
- *       Print current time using optional strftime format string.
- *       Default: "%Y-%m-%dT%H:%M:%S"
- *
- *   help
- *       List all commands.
+ *   calibrate               Measure dark baseline, set sensor threshold
+ *   measure                 Print average sensor ADC reading
+ *   set-offset <s>          Sensor-to-hour offset in seconds
+ *   set-clock <HH> <MM>     Manually set system time (bypasses SNTP)
+ *   set-time [<minute>]     Move hand to match system time
+ *   microstep <n> [fwd|bwd] Fine-adjust hand by N half-steps
+ *   advance                 Force one test minute advance
+ *   status                  Print clock manager status
+ *   sync-status             Show time sync / SNTP state
+ *   net-status              Show full network status (IP, geo, RSSI, etc.)
+ *   enc-test [n]            Poll encoder n times (default 50) and print raw values
+ *   time [<fmt>]            Print current time (strftime format)
+ *   help                    List all commands
  */
 
 #include "clock_manager.h"
+#include "networking.h"
+#include "encoder.h"
+#include "freertos/semphr.h"
 
 /**
  * @brief Start the UART command shell task.
- *        Spawns a FreeRTOS task that reads lines from UART0 and dispatches
- *        commands to the ClockManager.  Call once from app_main.
- * @param clock_mgr  Pointer to the shared ClockManager instance.
+ * @param clock_mgr   Pointer to the shared ClockManager.
+ * @param net         Pointer to the shared Networking instance.
+ * @param encoder     Pointer to the shared RotaryEncoder (for enc-test).
+ * @param bus_mutex   The I2C bus mutex owned by Display.
  */
-void console_start(ClockManager* clock_mgr);
+void console_start(ClockManager*     clock_mgr,
+                   Networking*       net,
+                   RotaryEncoder*    encoder,
+                   SemaphoreHandle_t bus_mutex);

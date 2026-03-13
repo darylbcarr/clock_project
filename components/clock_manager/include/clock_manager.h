@@ -109,6 +109,25 @@ public:
     void cmd_set_time(int current_displayed_minute = -1);
 
     /**
+     * @brief CMD: Manually inject a wall-clock time without SNTP.
+     *        Useful for testing before networking is implemented.
+     *        Sets the system RTC via settimeofday() and marks time_valid_ = true
+     *        so cmd_set_time() will work normally afterwards.
+     *
+     * @param hour    Local hour   (0-23)
+     * @param minute  Local minute (0-59)
+     * @param second  Local second (0-59, default 0)
+     */
+    void cmd_set_manual_time(int hour, int minute, int second = 0);
+
+    /**
+     * @brief CMD: Print a detailed sync / network status report.
+     *        Shows time_valid flag, current epoch, SNTP state, and
+     *        instructions for manual time entry when network is absent.
+     */
+    void cmd_sync_status();
+
+    /**
      * @brief CMD: Microstep the motor for fine hand adjustment.
      * @param steps      Number of microsteps (half-steps).
      * @param forward    true = forward, false = backward.
