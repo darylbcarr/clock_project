@@ -382,7 +382,7 @@ void Menu::build(ClockManager& cm, Networking& net, LedManager& leds) {
     auto clk = std::make_unique<MenuItem>("Clock");
 
     clk->addChild(std::make_unique<MenuItem>("Set Time", [this, &cm]() {
-        post_action([&cm]() { cm.cmd_set_time(-1); });
+        post_action([&cm]() { cm.cmd_set_time(-1, -1); });
     }));
 
     clk->addChild(std::make_unique<MenuItem>("Advance 1Min", [this, &cm]() {

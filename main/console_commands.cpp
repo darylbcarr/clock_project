@@ -237,8 +237,10 @@ static void dispatch(char* line)
         return;
     }
     if (strcmp(cmd, "set-time") == 0) {
-        int cur_min = (argc >= 2) ? atoi(argv[1]) : -1;
-        s_clock->cmd_set_time(cur_min);
+        // Usage: set-time [HH MM]  — HH is 12-hour (0-11)
+        int obs_hour = (argc >= 3) ? atoi(argv[1]) : -1;
+        int obs_min  = (argc >= 3) ? atoi(argv[2]) : -1;
+        s_clock->cmd_set_time(obs_hour, obs_min);
         return;
     }
     if (strcmp(cmd, "microstep") == 0) {

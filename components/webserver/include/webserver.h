@@ -49,7 +49,8 @@ private:
     TaskHandle_t   ws_task_handle_  = nullptr;
     TaskHandle_t   cmd_task_handle_ = nullptr;
     QueueHandle_t  cmd_queue_          = nullptr;  // depth-1 queue of 32-char cmd names
-    int            pending_observed_min_ = -1;     // for set-time with known position
+    int            pending_obs_hour_ = -1;          // for set-time with known position
+    int            pending_obs_min_  = -1;
 
     static WebServer* s_instance_;
 };

@@ -100,13 +100,13 @@ public:
 
     /**
      * @brief CMD: Set the clock hands to align with current real time.
-     *        Moves the motor forward (or backward) the necessary minutes.
-     *        The displayed_minute_ counter is updated accordingly.
+     *        Treats the clock face as a 12-hour dial (720 positions) and
+     *        always moves forward.
      *
-     * @param current_displayed_minute  What minute the hand is currently
-     *        showing (0-59).  -1 = unknown (perform full 60-min sweep from 0).
+     * @param obs_hour  Hour the hand currently shows (0-11). -1 = use stored value.
+     * @param obs_min   Minute the hand currently shows (0-59). -1 = use stored value.
      */
-    void cmd_set_time(int current_displayed_minute = -1);
+    void cmd_set_time(int obs_hour = -1, int obs_min = -1);
 
     /**
      * @brief CMD: Manually inject a wall-clock time without SNTP.
@@ -208,6 +208,7 @@ public:
     // Getters
     // ──────────────────────────────────────────────────────────────────────────
     int  displayed_minute()   const { return displayed_minute_; }
+    int  displayed_hour()     const { return displayed_hour_; }
     int  sensor_offset_sec()  const { return sensor_offset_sec_; }
     bool is_running()         const { return task_handle_ != nullptr; }
 
@@ -217,8 +218,9 @@ public:
     /** Last ADC value returned by cmd_measure_sensor_average(); 0 until first call. */
     int  last_sensor_adc()     const { return last_sensor_adc_; }
 
-    /** Restore displayed_minute from NVS on boot (before start()). */
+    /** Restore displayed position from NVS on boot (before start()). */
     void set_displayed_minute(int m) { displayed_minute_ = m; }
+    void set_displayed_hour(int h)   { displayed_hour_ = h; }
 
     /** Change per-step delay at runtime (persisted by caller). */
     void set_step_delay_us(uint32_t us) { motor_.set_step_delay(us); }
@@ -229,7 +231,6 @@ private:
     void tick();                              ///< Called every minute by the timer task
     void check_sensor_and_correct();         ///< Evaluate sensor near top-of-hour
     void advance_one_minute();               ///< Move motor + update counter
-    int  minutes_to_target(int target_min) const; ///< Shortest-path minute delta
 
     static void clock_task(void* arg);       ///< FreeRTOS task entry
 
@@ -239,6 +240,7 @@ private:
 
     // ── State ────────────────────────────────────────────────────────────────
     int     displayed_minute_;   ///< What minute the hand currently shows (0-59)
+    int     displayed_hour_;     ///< What hour the hand currently shows (0-11)
     int     sensor_offset_sec_;  ///< User-calibrated sensor-to-hour offset (s)
     int     last_sensor_adc_ = 0;
     bool    time_valid_;

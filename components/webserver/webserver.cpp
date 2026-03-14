@@ -167,10 +167,12 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
                                HTTPD_RESP_USE_STRLEN);
     }
 
-    // set-time with optional observed minute position
+    // set-time with optional observed 12h position
     if (strcmp(cmd_name, "set-time") == 0) {
+        cJSON* hj = cJSON_GetObjectItem(body, "observed_hour");
         cJSON* mj = cJSON_GetObjectItem(body, "observed_min");
-        self->pending_observed_min_ = cJSON_IsNumber(mj) ? (int)mj->valueint : -1;
+        self->pending_obs_hour_ = cJSON_IsNumber(hj) ? (int)hj->valueint : -1;
+        self->pending_obs_min_  = cJSON_IsNumber(mj) ? (int)mj->valueint : -1;
     }
 
     // Copy name to a fixed-size buffer (queue items are 32 bytes, value-copied)
@@ -370,7 +372,7 @@ void WebServer::dispatch_cmd(const char* cmd)
 {
     ESP_LOGI(TAG, "Executing command: %s", cmd);
 
-    if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(pending_observed_min_);
+    if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(pending_obs_hour_, pending_obs_min_);
     else if (strcmp(cmd, "advance")        == 0) clock_mgr_.cmd_test_advance();
     else if (strcmp(cmd, "step-fwd")       == 0) clock_mgr_.cmd_microstep(8, true);
     else if (strcmp(cmd, "step-bwd")       == 0) clock_mgr_.cmd_microstep(8, false);
@@ -431,7 +433,8 @@ char* WebServer::build_status_json()
     // Time
     cJSON_AddStringToObject(root, "time",         clock_mgr_.time_hms().c_str());
     cJSON_AddStringToObject(root, "date",         clock_mgr_.date_long().c_str());
-    cJSON_AddNumberToObject(root, "displayed_min",clock_mgr_.displayed_minute());
+    cJSON_AddNumberToObject(root, "displayed_min", clock_mgr_.displayed_minute());
+    cJSON_AddNumberToObject(root, "displayed_hour",clock_mgr_.displayed_hour());
     cJSON_AddBoolToObject  (root, "sntp",         clock_mgr_.is_time_valid());
     cJSON_AddStringToObject(root, "iana_tz",      net.iana_tz[0] ? net.iana_tz : "");
     cJSON_AddStringToObject(root, "posix_tz",     net.posix_tz[0] ? net.posix_tz : "");

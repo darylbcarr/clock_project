@@ -286,9 +286,11 @@ extern "C" void app_main()
     s_clock.set_motor_reverse(clockCfg.motor_reverse);
     s_clock.set_step_delay_us(clockCfg.step_delay_us);
     s_clock.cmd_set_sensor_offset(clockCfg.sensor_offset);
-    if (clockCfg.disp_minute >= 0) {
+    if (clockCfg.disp_minute >= 0 && clockCfg.disp_hour >= 0) {
         s_clock.set_displayed_minute(clockCfg.disp_minute);
-        ESP_LOGI(TAG, "Restored displayed minute: %d", (int)clockCfg.disp_minute);
+        s_clock.set_displayed_hour(clockCfg.disp_hour);
+        ESP_LOGI(TAG, "Restored displayed position: %02d:%02d",
+                 (int)clockCfg.disp_hour, (int)clockCfg.disp_minute);
     }
 
     // Resolve WiFi credentials (NVS → fallback to compile-time defaults)

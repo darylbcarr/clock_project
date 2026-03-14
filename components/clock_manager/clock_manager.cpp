@@ -26,6 +26,7 @@ ClockManager::ClockManager(uint32_t motor_delay_us)
     : motor_(motor_delay_us),
       sensor_(),
       displayed_minute_(-1),   // unknown until set
+      displayed_hour_(-1),     // unknown until set
       sensor_offset_sec_(0),
       time_valid_(false),
       running_(false),
@@ -104,7 +105,7 @@ void ClockManager::clock_task(void* arg)
             && notif == SYNC_NOTIFY)
         {
             ESP_LOGI("clock_manager", "Initial SNTP sync — aligning hands");
-            self->cmd_set_time(-1);
+            self->cmd_set_time(-1, -1);
         }
     }
 
@@ -117,7 +118,7 @@ void ClockManager::clock_task(void* arg)
             && notif == SYNC_NOTIFY)
         {
             ESP_LOGI("clock_manager", "Mid-run SNTP sync — aligning hands");
-            self->cmd_set_time(-1);
+            self->cmd_set_time(-1, -1);
         }
     }
     vTaskDelete(nullptr);
@@ -201,6 +202,8 @@ void ClockManager::check_sensor_and_correct()
                                              : StepDirection::FORWARD;
     motor_.move_steps(std::abs(error_minutes) * STEPS_PER_CLOCK_MINUTE, dir);
     displayed_minute_ = (displayed_minute_ - error_minutes + 60) % 60;
+    // Sensor fires near the hour; sync displayed_hour_ from real time
+    displayed_hour_ = t.tm_hour % 12;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,19 +217,11 @@ void ClockManager::advance_one_minute()
         displayed_minute_ = 0;
     } else {
         displayed_minute_ = (displayed_minute_ + 1) % 60;
+        if (displayed_minute_ == 0 && displayed_hour_ >= 0)
+            displayed_hour_ = (displayed_hour_ + 1) % 12;
     }
-    ESP_LOGD(TAG, "Displayed minute now: %d", displayed_minute_);
-    ConfigStore::save_disp_minute(displayed_minute_);
-}
-
-int ClockManager::minutes_to_target(int target_min) const
-{
-    if (displayed_minute_ < 0) return 0;
-    int current = displayed_minute_;
-    int delta = (target_min - current + 60) % 60;
-    // Prefer shorter path (max 30 min forward, otherwise go backward)
-    if (delta > 30) delta -= 60;
-    return delta;
+    ESP_LOGD(TAG, "Displayed position now: %02d:%02d", displayed_hour_, displayed_minute_);
+    ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,9 +240,10 @@ void ClockManager::on_time_synced()
     time_valid_ = true;
     ESP_LOGI(TAG, "Time synced. Current time: %s", time_full().c_str());
     // If we restored a known hand position from NVS, notify clock_task to sync immediately
-    if (displayed_minute_ >= 0 && task_handle_) {
+    if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
         xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
-        ESP_LOGI(TAG, "Notified clock_task to sync hand (displayed_min=%d)", displayed_minute_);
+        ESP_LOGI(TAG, "Notified clock_task to sync hand (displayed=%02d:%02d)",
+                 displayed_hour_, displayed_minute_);
     }
 }
 
@@ -255,7 +251,7 @@ void ClockManager::on_time_synced()
 // Command interface
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ClockManager::cmd_set_time(int current_displayed_minute)
+void ClockManager::cmd_set_time(int obs_hour, int obs_min)
 {
     if (!time_valid_) {
         ESP_LOGW(TAG, "cmd_set_time: time not yet valid (SNTP not synced)");
@@ -265,32 +261,38 @@ void ClockManager::cmd_set_time(int current_displayed_minute)
 
     xSemaphoreTake(mutex_, portMAX_DELAY);
 
-    struct tm t = get_local_tm();
-    int target_minute = t.tm_min;
-
-    if (current_displayed_minute >= 0 && current_displayed_minute < 60) {
-        displayed_minute_ = current_displayed_minute;
+    // Accept new observed position if provided
+    if (obs_hour >= 0 && obs_hour <= 11 && obs_min >= 0 && obs_min <= 59) {
+        displayed_hour_   = obs_hour;
+        displayed_minute_ = obs_min;
     }
 
-    int delta = minutes_to_target(target_minute);
+    if (displayed_hour_ < 0 || displayed_minute_ < 0) {
+        ESP_LOGW(TAG, "cmd_set_time: hand position unknown — call with obs_hour/obs_min first");
+        xSemaphoreGive(mutex_);
+        return;
+    }
 
-    ESP_LOGI(TAG, "cmd_set_time: displayed=%d  target=%d  delta=%d",
-             displayed_minute_, target_minute, delta);
+    struct tm t = get_local_tm();
+    int target_12h  = (t.tm_hour % 12) * 60 + t.tm_min;
+    int current_12h = displayed_hour_  * 60 + displayed_minute_;
+    int delta       = (target_12h - current_12h + 720) % 720;
+
+    ESP_LOGI(TAG, "cmd_set_time: current=%02d:%02d  target=%02d:%02d  delta=%d min",
+             displayed_hour_, displayed_minute_,
+             t.tm_hour % 12, t.tm_min, delta);
 
     if (delta == 0) {
-        ESP_LOGI(TAG, "Hand already at correct minute");
-    } else if (delta > 0) {
-        motor_.move_clock_minutes(delta);
-        displayed_minute_ = target_minute;
+        ESP_LOGI(TAG, "Hand already at correct position");
     } else {
-        motor_.move_steps(std::abs(delta) * STEPS_PER_CLOCK_MINUTE,
-                          StepDirection::BACKWARD);
-        displayed_minute_ = target_minute;
+        motor_.move_clock_minutes(delta);
+        displayed_hour_   = t.tm_hour % 12;
+        displayed_minute_ = t.tm_min;
     }
 
     xSemaphoreGive(mutex_);
-    ConfigStore::save_disp_minute(displayed_minute_);
-    ESP_LOGI(TAG, "cmd_set_time: hand set to minute %d", displayed_minute_);
+    ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+    ESP_LOGI(TAG, "cmd_set_time: hand set to %02d:%02d", displayed_hour_, displayed_minute_);
 }
 
 void ClockManager::cmd_set_manual_time(int hour, int minute, int second)
@@ -411,7 +413,7 @@ void ClockManager::cmd_status()
     ESP_LOGI(TAG, "──── ClockManager Status ────────────────────────────");
     ESP_LOGI(TAG, "  Running         : %s", is_running()    ? "yes" : "no");
     ESP_LOGI(TAG, "  Time valid      : %s", is_time_valid() ? "yes" : "no");
-    ESP_LOGI(TAG, "  Displayed min   : %d", displayed_minute_);
+    ESP_LOGI(TAG, "  Displayed pos   : %02d:%02d", displayed_hour_, displayed_minute_);
     ESP_LOGI(TAG, "  Sensor offset   : %d s", sensor_offset_sec_);
     ESP_LOGI(TAG, "  Sensor threshold: %d", sensor_.get_threshold());
     ESP_LOGI(TAG, "  Sensor dark mean: %d", sensor_.get_dark_mean());

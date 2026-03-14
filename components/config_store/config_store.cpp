@@ -32,6 +32,7 @@ bool ConfigStore::save(const ClockCfg& c)
     nvs_set_u8 (h, "clk_mrev",     c.motor_reverse ? 1u : 0u);
     nvs_set_u32(h, "clk_step_us",  c.step_delay_us);
     nvs_set_i32(h, "clk_dmin",     c.disp_minute);
+    nvs_set_i32(h, "clk_dhour",    c.disp_hour);
     bool ok = (nvs_commit(h) == ESP_OK);
     nvs_close(h);
     return ok;
@@ -46,15 +47,17 @@ bool ConfigStore::load(ClockCfg& c)
     if (nvs_get_u8 (h, "clk_mrev",    &u8)  == ESP_OK) c.motor_reverse = (u8 != 0);
     if (nvs_get_u32(h, "clk_step_us", &u32) == ESP_OK) c.step_delay_us = u32;
     if (nvs_get_i32(h, "clk_dmin",    &i32) == ESP_OK) c.disp_minute   = i32;
+    if (nvs_get_i32(h, "clk_dhour",   &i32) == ESP_OK) c.disp_hour     = i32;
     nvs_close(h);
     return true;
 }
 
-bool ConfigStore::save_disp_minute(int32_t min)
+bool ConfigStore::save_disp_position(int32_t hour, int32_t min)
 {
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    nvs_set_i32(h, "clk_dmin", min);
+    nvs_set_i32(h, "clk_dmin",  min);
+    nvs_set_i32(h, "clk_dhour", hour);
     bool ok = (nvs_commit(h) == ESP_OK);
     nvs_close(h);
     return ok;

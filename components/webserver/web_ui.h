@@ -322,8 +322,6 @@ input[type=range]::-webkit-slider-thumb {
 
 <!-- ════════════════════════════════════ LIGHTS ══════════════════════════ -->
 <div id="sec-lights" class="section">
-
-  <!-- Strip 1 -->
   <div class="card" id="strip1-card">
     <div class="strip-header">
       <span class="strip-name">Ring</span>
@@ -352,7 +350,7 @@ input[type=range]::-webkit-slider-thumb {
     <div class="color-grid" id="color1-grid"></div>
   </div>
 
-  <!-- Strip 2 -->
+  <!-- Base -->
   <div class="card" id="strip2-card">
     <div class="strip-header">
       <span class="strip-name">Base</span>
@@ -415,15 +413,15 @@ input[type=range]::-webkit-slider-thumb {
     <div class="card-title">LED Strips</div>
     <div class="info-grid">
       <div class="info-item">
-        <div class="info-label">Strip 1</div>
+        <div class="info-label">Ring</div>
         <div class="info-val" id="inf-s1" style="display:flex;align-items:center;gap:6px;"></div>
       </div>
       <div class="info-item">
-        <div class="info-label">Strip 2</div>
+        <div class="info-label">Base</div>
         <div class="info-val" id="inf-s2" style="display:flex;align-items:center;gap:6px;"></div>
       </div>
-      <div class="info-item"><div class="info-label">Strip 1 LEDs</div><div class="info-val" id="inf-s1len">—</div></div>
-      <div class="info-item"><div class="info-label">Strip 2 LEDs</div><div class="info-val" id="inf-s2len">—</div></div>
+      <div class="info-item"><div class="info-label">Ring LEDs</div><div class="info-val" id="inf-s1len">—</div></div>
+      <div class="info-item"><div class="info-label">Base LEDs</div><div class="info-val" id="inf-s2len">—</div></div>
     </div>
   </div>
 
@@ -443,8 +441,8 @@ input[type=range]::-webkit-slider-thumb {
         <tr><td class="pin-num">14</td><td>Sensor LDR (ADC input)</td></tr>
         <tr><td class="pin-num">15</td><td>Stepper IN2</td></tr>
         <tr><td class="pin-num">16</td><td>Stepper IN1</td></tr>
-        <tr><td class="pin-num">LED1</td><td>WS2812B Strip 1 Data</td></tr>
-        <tr><td class="pin-num">LED2</td><td>WS2812B Strip 2 Data</td></tr>
+        <tr><td class="pin-num">LED1</td><td>WS2812B Ring Data</td></tr>
+        <tr><td class="pin-num">LED2</td><td>WS2812B Base Data</td></tr>
       </tbody>
     </table>
   </div>
@@ -470,12 +468,12 @@ input[type=range]::-webkit-slider-thumb {
   <div class="card">
     <div class="card-title">LED Strip Lengths</div>
     <div class="cfg-row">
-      <label>Strip 1 LED count</label>
+      <label>Ring LED count</label>
       <input type="number" id="cfg-s1len" min="1" max="300" value="30">
       <button class="btn btn-secondary btn-sm" onclick="applyLen(1)">Apply</button>
     </div>
     <div class="cfg-row">
-      <label>Strip 2 LED count</label>
+      <label>Base LED count</label>
       <input type="number" id="cfg-s2len" min="1" max="300" value="30">
       <button class="btn btn-secondary btn-sm" onclick="applyLen(2)">Apply</button>
     </div>
@@ -684,8 +682,9 @@ function doSetTime() {
   const val = document.getElementById('obs-time').value; // "HH:MM"
   if (!val) { toast('Enter observed time', 'err'); return; }
   const parts = val.split(':');
-  const observed_min = parseInt(parts[1], 10);
-  post('set-time', {observed_min}).then(() => toast('Set-time command sent'));
+  const observed_hour = parseInt(parts[0], 10) % 12;
+  const observed_min  = parseInt(parts[1], 10);
+  post('set-time', {observed_hour, observed_min}).then(() => toast('Set-time command sent'));
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────
@@ -850,7 +849,10 @@ function applyData(d) {
   setText('inf-fw', d.fw_version || '—');
   setText('inf-uptime', fmtUptime(d.uptime_s || 0));
   setText('inf-heap', fmtHeap(d.free_heap || 0));
-  setText('inf-dmin', d.displayed_min !== undefined ? d.displayed_min : '—');
+  const dispPos = (d.displayed_hour >= 0 && d.displayed_min >= 0)
+    ? String(d.displayed_hour).padStart(2,'0') + ':' + String(d.displayed_min).padStart(2,'0')
+    : '—';
+  setText('inf-dmin', dispPos);
   setText('inf-ssid', d.ssid || '—');
   setText('inf-rssi', d.rssi !== undefined ? d.rssi + ' dBm' : '—');
   setText('inf-lip', d.local_ip || '—');
