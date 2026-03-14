@@ -4,6 +4,7 @@
  */
 
 #include "clock_manager.h"
+#include "config_store.h"
 
 #include <cstring>
 #include <cmath>
@@ -91,20 +92,33 @@ void ClockManager::stop()
 void ClockManager::clock_task(void* arg)
 {
     ClockManager* self = static_cast<ClockManager*>(arg);
+    static constexpr uint32_t SYNC_NOTIFY = 1U;
 
-    // Calculate the delay to the next whole minute boundary
-    struct tm now_tm = self->get_local_tm();
-    int seconds_into_minute = now_tm.tm_sec;
-    uint32_t delay_to_next_minute_ms =
-        (uint32_t)((60 - seconds_into_minute) * 1000);
-
-    // Wait until the next whole minute
-    vTaskDelay(pdMS_TO_TICKS(delay_to_next_minute_ms));
+    // ── Initial alignment: wait until the next whole-minute boundary ──────────
+    // Interruptible so an SNTP sync can trigger an immediate hand correction.
+    {
+        struct tm t = self->get_local_tm();
+        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) * 1000);
+        uint32_t notif = 0;
+        if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(delay_ms)) == pdTRUE
+            && notif == SYNC_NOTIFY)
+        {
+            ESP_LOGI("clock_manager", "Initial SNTP sync — aligning hands");
+            self->cmd_set_time(-1);
+        }
+    }
 
     while (self->running_) {
         self->tick();
-        // Sleep until the next whole minute (1-second correction loop)
-        vTaskDelay(pdMS_TO_TICKS(60000));
+
+        // Sleep 60 s; wake early if SNTP syncs and we need to re-align.
+        uint32_t notif = 0;
+        if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(60000)) == pdTRUE
+            && notif == SYNC_NOTIFY)
+        {
+            ESP_LOGI("clock_manager", "Mid-run SNTP sync — aligning hands");
+            self->cmd_set_time(-1);
+        }
     }
     vTaskDelete(nullptr);
 }
@@ -202,6 +216,7 @@ void ClockManager::advance_one_minute()
         displayed_minute_ = (displayed_minute_ + 1) % 60;
     }
     ESP_LOGD(TAG, "Displayed minute now: %d", displayed_minute_);
+    ConfigStore::save_disp_minute(displayed_minute_);
 }
 
 int ClockManager::minutes_to_target(int target_min) const
@@ -229,6 +244,11 @@ void ClockManager::on_time_synced()
 {
     time_valid_ = true;
     ESP_LOGI(TAG, "Time synced. Current time: %s", time_full().c_str());
+    // If we restored a known hand position from NVS, notify clock_task to sync immediately
+    if (displayed_minute_ >= 0 && task_handle_) {
+        xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
+        ESP_LOGI(TAG, "Notified clock_task to sync hand (displayed_min=%d)", displayed_minute_);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +289,7 @@ void ClockManager::cmd_set_time(int current_displayed_minute)
     }
 
     xSemaphoreGive(mutex_);
+    ConfigStore::save_disp_minute(displayed_minute_);
     ESP_LOGI(TAG, "cmd_set_time: hand set to minute %d", displayed_minute_);
 }
 
@@ -370,7 +391,11 @@ int ClockManager::cmd_measure_sensor_average()
 void ClockManager::cmd_set_sensor_offset(int seconds_offset)
 {
     sensor_offset_sec_ = seconds_offset;
-    ESP_LOGI(TAG, "cmd_set_sensor_offset: offset=%d s", sensor_offset_sec_);
+    ClockCfg cc;
+    ConfigStore::load(cc);
+    cc.sensor_offset = sensor_offset_sec_;
+    ConfigStore::save(cc);
+    ESP_LOGI(TAG, "cmd_set_sensor_offset: offset=%d s  (saved)", sensor_offset_sec_);
 }
 
 void ClockManager::cmd_test_advance()

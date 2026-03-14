@@ -36,6 +36,9 @@ private:
     // JSON helpers
     char* build_status_json();
 
+    // Persistence helper — snapshots current LED state to NVS
+    void save_led_config();
+
     // Command dispatcher (runs on cmd_exec_task)
     void dispatch_cmd(const char* cmd_name);
 

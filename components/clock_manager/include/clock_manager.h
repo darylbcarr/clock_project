@@ -217,6 +217,13 @@ public:
     /** Last ADC value returned by cmd_measure_sensor_average(); 0 until first call. */
     int  last_sensor_adc()     const { return last_sensor_adc_; }
 
+    /** Restore displayed_minute from NVS on boot (before start()). */
+    void set_displayed_minute(int m) { displayed_minute_ = m; }
+
+    /** Change per-step delay at runtime (persisted by caller). */
+    void set_step_delay_us(uint32_t us) { motor_.set_step_delay(us); }
+    uint32_t get_step_delay_us()  const { return motor_.get_step_delay(); }
+
 private:
     // ── Internal helpers ────────────────────────────────────────────────────
     void tick();                              ///< Called every minute by the timer task
@@ -236,6 +243,7 @@ private:
     int     last_sensor_adc_ = 0;
     bool    time_valid_;
     bool    running_;
+    bool    needs_sntp_sync_ = false;  ///< Set when SNTP syncs with a known hand position
 
     // ── Task ────────────────────────────────────────────────────────────────
     TaskHandle_t      task_handle_;

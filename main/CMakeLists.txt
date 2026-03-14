@@ -13,6 +13,7 @@ idf_component_register(
         menu
         led
         webserver
+        config_store
         driver
         freertos
         log

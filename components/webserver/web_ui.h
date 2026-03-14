@@ -513,6 +513,61 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
+  <!-- Motor Speed -->
+  <div class="card">
+    <div class="card-title">Motor Speed</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Lower delay = faster &amp; noisier. Higher = slower &amp; quieter. Default: 2000 µs/step.
+    </p>
+    <div class="slider-row">
+      <label>Step delay</label>
+      <input type="range" id="cfg-step-delay" min="900" max="3000" value="2000"
+             oninput="updateSpeedLabel(this.value)">
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      <span id="cfg-step-label">2000 µs/step</span>
+      &nbsp;·&nbsp; <span id="cfg-step-hz">—</span>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="saveSpeed()">Save Speed</button>
+  </div>
+
+  <!-- WiFi Credentials -->
+  <div class="card">
+    <div class="card-title">WiFi Credentials</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Saved credentials are used on next restart.
+    </p>
+    <div class="cfg-row">
+      <label>SSID</label>
+      <input type="text" id="cfg-ssid" placeholder="Network name" autocomplete="off"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:13px;">
+    </div>
+    <div class="cfg-row" style="margin-top:6px;">
+      <label>Password</label>
+      <input type="password" id="cfg-pass" placeholder="••••••••" autocomplete="off"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:13px;">
+    </div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:10px;width:100%"
+            onclick="saveWifi()">Save Credentials</button>
+  </div>
+
+  <!-- Timezone Override -->
+  <div class="card">
+    <div class="card-title">Timezone Override</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Leave empty to use automatic geolocation. Format: POSIX TZ string, e.g.
+      <code style="font-size:11px;color:var(--a)">CST6CDT,M3.2.0,M11.1.0</code>
+    </p>
+    <div class="cfg-row">
+      <input type="text" id="cfg-tz" placeholder="Empty = auto-detect"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:12px;font-family:monospace;">
+      <button class="btn btn-secondary btn-sm" onclick="saveTz()">Save</button>
+    </div>
+  </div>
+
 </div><!-- /sec-config -->
 </div><!-- /main -->
 
@@ -707,6 +762,32 @@ function doMeasure() {
   post('measure').then(() => toast('ADC measured'));
 }
 
+function updateSpeedLabel(v) {
+  v = parseInt(v);
+  const hz = (1e6 / v).toFixed(1);
+  document.getElementById('cfg-step-label').textContent = v + ' µs/step';
+  document.getElementById('cfg-step-hz').textContent = hz + ' steps/s';
+}
+function saveSpeed() {
+  const v = parseInt(document.getElementById('cfg-step-delay').value);
+  postCfg({step_delay_us: v}).then(() => toast('Motor speed saved'));
+}
+
+function saveWifi() {
+  const ssid = document.getElementById('cfg-ssid').value.trim();
+  const pass = document.getElementById('cfg-pass').value;
+  if (!ssid) { toast('Enter SSID', 'err'); return; }
+  postCfg({ssid, password: pass}).then(() => {
+    toast('WiFi saved — restart to apply');
+    document.getElementById('cfg-pass').value = '';
+  });
+}
+
+function saveTz() {
+  const tz = document.getElementById('cfg-tz').value.trim();
+  postCfg({tz_override: tz}).then(() => toast('Timezone saved — restart to apply'));
+}
+
 // ── Data application ─────────────────────────────────────────────────────────
 function setText(id, val) {
   const el = document.getElementById(id);
@@ -781,10 +862,17 @@ function applyData(d) {
   setText('inf-tz-iana', d.iana_tz || '—');
   setText('inf-tz-posix', d.posix_tz || '—');
 
-  // Config sync (once)
+  // Config sync (once, on first data)
   if (d.sensor_offset_sec !== undefined && cfgOffset === 0) {
     cfgOffset = d.sensor_offset_sec;
     document.getElementById('cfg-offset-val').textContent = cfgOffset;
+  }
+  if (d.step_delay_us) {
+    document.getElementById('cfg-step-delay').value = d.step_delay_us;
+    updateSpeedLabel(d.step_delay_us);
+  }
+  if (d.ssid && !document.getElementById('cfg-ssid').value) {
+    document.getElementById('cfg-ssid').value = d.ssid;
   }
   if (d.leds) {
     if (d.leds.strip1 && d.leds.strip1.active_len)

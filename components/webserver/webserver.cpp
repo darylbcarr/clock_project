@@ -1,6 +1,7 @@
 #include "webserver.h"
 #include "web_ui.h"
 #include "led_manager.h"
+#include "config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -158,6 +159,7 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
     else if (strcmp(cmd_name, "led2-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_2);
 
     if (handled_inline) {
+        self->save_led_config();
         cJSON_Delete(body);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -191,7 +193,7 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
 {
     auto* self = static_cast<WebServer*>(req->user_ctx);
 
-    char buf[256] = {};
+    char buf[384] = {};
     int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
@@ -205,19 +207,81 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
     }
 
     cJSON* j;
-    if ((j = cJSON_GetObjectItem(body, "strip1_len")) && cJSON_IsNumber(j))
+
+    // ── LED strip lengths (apply + persist) ──────────────────────────────────
+    bool led_changed = false;
+    if ((j = cJSON_GetObjectItem(body, "strip1_len")) && cJSON_IsNumber(j)) {
         self->leds_.set_active_len(LedManager::Target::STRIP_1, (uint16_t)j->valueint);
-    if ((j = cJSON_GetObjectItem(body, "strip2_len")) && cJSON_IsNumber(j))
+        led_changed = true;
+    }
+    if ((j = cJSON_GetObjectItem(body, "strip2_len")) && cJSON_IsNumber(j)) {
         self->leds_.set_active_len(LedManager::Target::STRIP_2, (uint16_t)j->valueint);
-    if ((j = cJSON_GetObjectItem(body, "motor_reverse")) && cJSON_IsBool(j))
-        self->clock_mgr_.set_motor_reverse(cJSON_IsTrue(j));
-    if ((j = cJSON_GetObjectItem(body, "sensor_offset")) && cJSON_IsNumber(j))
-        self->clock_mgr_.cmd_set_sensor_offset((int)j->valueint);
+        led_changed = true;
+    }
+    if (led_changed) self->save_led_config();
+
+    // ── Clock / motor settings (load-modify-save) ─────────────────────────────
+    ClockCfg cc;
+    ConfigStore::load(cc);
+    bool clock_changed = false;
+
+    if ((j = cJSON_GetObjectItem(body, "motor_reverse")) && cJSON_IsBool(j)) {
+        cc.motor_reverse = cJSON_IsTrue(j);
+        self->clock_mgr_.set_motor_reverse(cc.motor_reverse);
+        clock_changed = true;
+    }
+    if ((j = cJSON_GetObjectItem(body, "sensor_offset")) && cJSON_IsNumber(j)) {
+        cc.sensor_offset = (int)j->valueint;
+        self->clock_mgr_.cmd_set_sensor_offset(cc.sensor_offset);
+        // cmd_set_sensor_offset already saves to NVS
+    }
+    if ((j = cJSON_GetObjectItem(body, "step_delay_us")) && cJSON_IsNumber(j)) {
+        uint32_t d = (uint32_t)j->valueint;
+        if (d >= 900u) {
+            cc.step_delay_us = d;
+            self->clock_mgr_.set_step_delay_us(d);
+            clock_changed = true;
+        }
+    }
+    if (clock_changed) ConfigStore::save(cc);
+
+    // ── Network credentials (save; take effect on next boot) ─────────────────
+    cJSON* ssid_j = cJSON_GetObjectItem(body, "ssid");
+    cJSON* pass_j = cJSON_GetObjectItem(body, "password");
+    if (cJSON_IsString(ssid_j) && cJSON_IsString(pass_j)) {
+        NetCfg nc;
+        ConfigStore::load(nc);
+        snprintf(nc.ssid,     sizeof(nc.ssid),     "%s", ssid_j->valuestring);
+        snprintf(nc.password, sizeof(nc.password), "%s", pass_j->valuestring);
+        ConfigStore::save(nc);
+    }
+
+    // ── Timezone override (save; applied by networking on next connect) ────────
+    if ((j = cJSON_GetObjectItem(body, "tz_override")) && cJSON_IsString(j)) {
+        NetCfg nc;
+        ConfigStore::load(nc);
+        snprintf(nc.tz_override, sizeof(nc.tz_override), "%s", j->valuestring);
+        ConfigStore::save(nc);
+    }
 
     cJSON_Delete(body);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+// ── LED config snapshot ───────────────────────────────────────────────────────
+
+void WebServer::save_led_config()
+{
+    LedCfg cfg;
+    for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
+        cfg.strip[i].len        = leds_.get_active_len(i);
+        cfg.strip[i].brightness = leds_.get_brightness(i);
+        cfg.strip[i].effect     = static_cast<uint8_t>(leds_.get_effect(i));
+        leds_.get_color(i, cfg.strip[i].r, cfg.strip[i].g, cfg.strip[i].b);
+    }
+    ConfigStore::save(cfg);
 }
 
 esp_err_t WebServer::on_ws(httpd_req_t* req)
@@ -346,6 +410,11 @@ void WebServer::dispatch_cmd(const char* cmd)
         leds_.set_brightness(LedManager::Target::BOTH, b < 25 ? 0 : b - 25);
     }
     else ESP_LOGW(TAG, "Unknown command: %s", cmd);
+
+    // Persist LED state after any LED command (effects, brightness, next)
+    if (strncmp(cmd, "led", 3) == 0) {
+        save_led_config();
+    }
 }
 
 // ── JSON status builder ───────────────────────────────────────────────────────
@@ -371,6 +440,7 @@ char* WebServer::build_status_json()
     cJSON_AddNumberToObject(root, "sensor_offset_sec", clock_mgr_.sensor_offset_sec());
     cJSON_AddNumberToObject(root, "sensor_adc",        clock_mgr_.last_sensor_adc());
     cJSON_AddBoolToObject  (root, "motor_reverse",     clock_mgr_.is_motor_reverse());
+    cJSON_AddNumberToObject(root, "step_delay_us",     static_cast<double>(clock_mgr_.get_step_delay_us()));
     cJSON_AddStringToObject(root, "fw_version",        "1.0.0");
 
     // Network / WiFi

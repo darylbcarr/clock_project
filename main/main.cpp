@@ -48,6 +48,7 @@
 
 #include <cstdio>
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -61,16 +62,16 @@
 #include "menu.h"
 #include "webserver.h"
 #include "led_manager.h"
+#include "config_store.h"
 
 static const char* TAG = "main";
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+// ── Configuration defaults (used when NVS has no saved value) ─────────────────
 
-static constexpr const char* WIFI_SSID           = "Starstuff";
-static constexpr const char* WIFI_PASSWORD       = "ItsyBitsy";
-// static constexpr const char* TZ_OVERRIDE         = "CST6CDT,M3.2.0,M11.1.0";
-static constexpr const char* TZ_OVERRIDE         = "";
-static constexpr uint32_t    MOTOR_STEP_DELAY_US = 2000;
+static constexpr const char* WIFI_SSID_DEFAULT     = "Starstuff";
+static constexpr const char* WIFI_PASSWORD_DEFAULT = "ItsyBitsy";
+// static constexpr const char* TZ_OVERRIDE_DEFAULT = "CST6CDT,M3.2.0,M11.1.0";
+static constexpr const char* TZ_OVERRIDE_DEFAULT   = "";
 
 static constexpr gpio_num_t  I2C_SDA             = GPIO_NUM_8;
 static constexpr gpio_num_t  I2C_SCL             = GPIO_NUM_9;
@@ -82,7 +83,7 @@ static constexpr gpio_num_t  BUTTON_B            = GPIO_NUM_11;  // menu next
 
 // ── Shared system objects (static lifetime) ───────────────────────────────────
 
-static ClockManager  s_clock(MOTOR_STEP_DELAY_US);
+static ClockManager  s_clock(2000);  // default step delay; overridden from NVS below
 static Networking    s_net(s_clock);
 static Display       s_display;
 static SeesawDevice  s_seesaw;
@@ -260,6 +261,43 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "  Analog Clock Driver  — ESP32-S3");
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
 
+    // ── 0. NVS flash init (must be first; Networking::begin() reuses it) ─────
+    {
+        esp_err_t ret = nvs_flash_init();
+        if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+            ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_LOGW(TAG, "NVS partition issue — erasing and reinitialising");
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            ret = nvs_flash_init();
+        }
+        ESP_ERROR_CHECK(ret);
+        ConfigStore::init();
+    }
+
+    // ── 0a. Load persisted configuration ────────────────────────────────────
+    ClockCfg  clockCfg;
+    LedCfg    ledCfg;
+    NetCfg    netCfg;
+    ConfigStore::load(clockCfg);
+    ConfigStore::load(ledCfg);
+    ConfigStore::load(netCfg);
+
+    // Apply clock config before start()
+    s_clock.set_motor_reverse(clockCfg.motor_reverse);
+    s_clock.set_step_delay_us(clockCfg.step_delay_us);
+    s_clock.cmd_set_sensor_offset(clockCfg.sensor_offset);
+    if (clockCfg.disp_minute >= 0) {
+        s_clock.set_displayed_minute(clockCfg.disp_minute);
+        ESP_LOGI(TAG, "Restored displayed minute: %d", (int)clockCfg.disp_minute);
+    }
+
+    // Resolve WiFi credentials (NVS → fallback to compile-time defaults)
+    const char* wifi_ssid = (netCfg.ssid[0] != '\0') ? netCfg.ssid : WIFI_SSID_DEFAULT;
+    const char* wifi_pass = (netCfg.password[0] != '\0') ? netCfg.password : WIFI_PASSWORD_DEFAULT;
+    const char* tz_override = (netCfg.tz_override[0] != '\0') ? netCfg.tz_override : TZ_OVERRIDE_DEFAULT;
+    ESP_LOGI(TAG, "WiFi SSID: %s (source: %s)", wifi_ssid,
+             netCfg.ssid[0] ? "NVS" : "default");
+
     // ── 1. Display — inits I2C bus, exposes bus handle + mutex ───────────────
     ESP_LOGI(TAG, "Initialising display...");
     if (!s_display.init(I2C_NUM_0, 0x3C, (int)I2C_SDA, (int)I2C_SCL)) {
@@ -303,6 +341,16 @@ extern "C" void app_main()
     }
     s_leds.start();
 
+    // Apply persisted LED config (after start so the effect task is running)
+    for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
+        LedManager::Target tgt = (i == 0) ? LedManager::Target::STRIP_1
+                                           : LedManager::Target::STRIP_2;
+        s_leds.set_active_len(tgt, ledCfg.strip[i].len);
+        s_leds.set_brightness(tgt, ledCfg.strip[i].brightness);
+        s_leds.set_color(tgt, ledCfg.strip[i].r, ledCfg.strip[i].g, ledCfg.strip[i].b);
+        s_leds.set_effect(tgt, static_cast<LedManager::Effect>(ledCfg.strip[i].effect));
+    }
+
     // ── 2c. Hardware buttons (active-low, pull-up) ────────────────────────────
     {
         const gpio_config_t btn_cfg = {
@@ -325,9 +373,9 @@ extern "C" void app_main()
     s_menu.build(s_clock, s_net, s_leds);
 
     // ── 4. Networking — async WiFi + SNTP + geolocation ──────────────────────
-    s_net.set_wifi_credentials(WIFI_SSID, WIFI_PASSWORD);
-    if (TZ_OVERRIDE[0] != '\0') {
-        s_net.set_timezone_override(TZ_OVERRIDE);
+    s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
+    if (tz_override[0] != '\0') {
+        s_net.set_timezone_override(tz_override);
     }
     s_net.begin();
 
