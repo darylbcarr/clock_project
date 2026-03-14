@@ -44,6 +44,15 @@
 
 static const char* TAG = "Menu";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static std::string center_str(const std::string& s, int width = 16) {
+    int len = static_cast<int>(s.size());
+    if (len >= width) return s.substr(0, width);
+    int left = (width - len) / 2;
+    return std::string(left, ' ') + s;
+}
+
 // ── MenuItem ─────────────────────────────────────────────────────────────────
 
 MenuItem::MenuItem(const std::string& name)
@@ -81,6 +90,8 @@ void Menu::next() {
     if (current_selection_ < current_menu_->getChildren().size() - 1) {
         current_selection_++;
         updateDisplayStart();
+        h_scroll_offset_ = 0;
+        h_scroll_dir_    = 1;
     }
 }
 
@@ -89,6 +100,8 @@ void Menu::previous() {
     if (current_selection_ > 0) {
         current_selection_--;
         updateDisplayStart();
+        h_scroll_offset_ = 0;
+        h_scroll_dir_    = 1;
     }
 }
 
@@ -101,6 +114,8 @@ void Menu::select() {
         current_menu_      = selected;
         current_selection_ = 0;
         display_start_     = 0;
+        h_scroll_offset_   = 0;
+        h_scroll_dir_      = 1;
         ESP_LOGI(TAG, "Entering: %s", selected->getName().c_str());
     } else {
         ESP_LOGI(TAG, "Execute: %s", selected->getName().c_str());
@@ -113,6 +128,8 @@ void Menu::back() {
     current_menu_      = current_menu_->getParent();
     current_selection_ = 0;
     display_start_     = 0;
+    h_scroll_offset_   = 0;
+    h_scroll_dir_      = 1;
 }
 
 void Menu::updateDisplayStart() {
@@ -137,15 +154,65 @@ std::vector<std::string> Menu::getVisibleItems() const {
 }
 
 void Menu::render() {
-    if (blanked_) return;
-    auto visible_items = getVisibleItems();
+    if (blanked_ || !current_menu_) return;
+
+    const auto& children = current_menu_->getChildren();
+    std::vector<std::string> lines;
+    lines.reserve(1 + MAX_VISIBLE_ITEMS);
+
+    // Line 0: centred title
+    lines.push_back(center_str(current_menu_->getName()));
+
+    // Lines 1..MAX_VISIBLE_ITEMS: items (with h-scroll on selected item)
+    size_t end = std::min(display_start_ + MAX_VISIBLE_ITEMS, children.size());
+    for (size_t i = display_start_; i < end; i++) {
+        const std::string& name = children[i]->getName();
+        if (i == current_selection_ && (int)name.length() > 16) {
+            int max_off = (int)name.length() - 16;
+            int off = std::min(h_scroll_offset_, max_off);
+            lines.push_back(name.substr(off, 16));
+        } else {
+            lines.push_back(name);
+        }
+    }
+    while ((int)lines.size() < 1 + (int)MAX_VISIBLE_ITEMS)
+        lines.emplace_back("");
+
+    // highlight_line is +1 to account for the title row
     int highlight_line = (current_selection_ >= display_start_)
-                         ? (int)(current_selection_ - display_start_)
+                         ? (int)(current_selection_ - display_start_) + 1
                          : -1;
 
-    // Show breadcrumb on line 0 (using the 7th display row for context header)
-    // We prepend the current menu name as first item label
-    display_.writeLines(visible_items, highlight_line);
+    display_.writeLines(lines, highlight_line);
+}
+
+void Menu::render_scrolled(bool going_next) {
+    if (blanked_) return;
+    display_.startHardwareScroll(
+        going_next ? ScrollMode::HARDWARE_UP : ScrollMode::HARDWARE_DOWN, 7);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    render();                      // updates buffer; refresh_display skipped while scrolling
+    display_.stopHardwareScroll(); // stops scroll and flushes the new buffer
+}
+
+void Menu::tick_h_scroll() {
+    if (blanked_ || !current_menu_) return;
+    const auto& children = current_menu_->getChildren();
+    if (children.empty()) return;
+    const std::string& name = children[current_selection_]->getName();
+    int name_len = (int)name.length();
+    if (name_len <= 16) return;
+
+    int max_off = name_len - 16;
+    h_scroll_offset_ += h_scroll_dir_;
+    if (h_scroll_offset_ >= max_off) {
+        h_scroll_offset_ = max_off;
+        h_scroll_dir_    = -1;
+    } else if (h_scroll_offset_ <= 0) {
+        h_scroll_offset_ = 0;
+        h_scroll_dir_    = 1;
+    }
+    render();
 }
 
 // ── Display blanking ──────────────────────────────────────────────────────────
@@ -176,20 +243,26 @@ void Menu::tick_blank_timer() {
 // "Press to return" so the user knows what to do.
 
 static constexpr uint32_t DISMISS_TIMEOUT_MS = 30000;
+static constexpr uint32_t DISMISS_HOLD_MS    = 800;
 
 void Menu::wait_for_dismiss() {
+    // Debounce: wait for button released from the select/navigate press
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    uint32_t hold_ms = 0;
     uint32_t elapsed = 0;
-    // Clear any stale button state by letting one poll pass first
-    if (dismiss_fn_) dismiss_fn_();
-    vTaskDelay(pdMS_TO_TICKS(200));   // debounce: ignore button still held from select press
-    elapsed += 200;
 
     while (elapsed < DISMISS_TIMEOUT_MS) {
-        if (dismiss_fn_ && dismiss_fn_()) return;
+        bool pressed = dismiss_fn_ ? dismiss_fn_() : false;
+        if (pressed) {
+            hold_ms += 50;
+            if (hold_ms >= DISMISS_HOLD_MS) return;  // long press detected
+        } else {
+            hold_ms = 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(50));
         elapsed += 50;
     }
-    // Timed out after 30s — return anyway
     ESP_LOGW("Menu", "wait_for_dismiss: timed out");
 }
 
@@ -200,7 +273,7 @@ void Menu::wait_for_dismiss() {
 void Menu::show_clock_status(ClockManager& cm) {
     char buf[20];
     display_.clear();
-    display_.print(0, "Clock Status");
+    display_.print(0, center_str("Clock Status").c_str());
     display_.print(1, "------------");
     snprintf(buf, sizeof(buf), "Min: %d", cm.displayed_minute());
     display_.print(2, buf);
@@ -208,7 +281,6 @@ void Menu::show_clock_status(ClockManager& cm) {
     display_.print(3, buf);
     display_.print(4, cm.is_time_valid() ? "SNTP: synced" : "SNTP: no sync");
     display_.print(5, cm.time_hm().c_str());
-    display_.print(7, "Press to return");
     wait_for_dismiss();
     render();
 }
@@ -217,7 +289,7 @@ void Menu::show_net_status(Networking& net) {
     const NetStatus& s = net.get_status();
     char buf[20];
     display_.clear();
-    display_.print(0, s.wifi_connected ? "WiFi: Connected" : "WiFi: No conn");
+    display_.print(0, center_str("Net Status").c_str());
     if (s.wifi_connected) {
         snprintf(buf, sizeof(buf), "%.14s", s.ssid);
         display_.print(1, buf);
@@ -231,19 +303,19 @@ void Menu::show_net_status(Networking& net) {
         display_.print(5, buf);
         snprintf(buf, sizeof(buf), "%.16s", s.iana_tz);
         display_.print(6, buf);
+    } else {
+        display_.print(1, "No connection");
     }
-    display_.print(7, "Press to return");
     wait_for_dismiss();
     render();
 }
 
 void Menu::show_time_screen(ClockManager& cm) {
     display_.clear();
-    display_.print(0, "Time & Sync");
+    display_.print(0, center_str("Time & Sync").c_str());
     display_.print(1, cm.time_hms().c_str());
     display_.print(2, cm.date_short().c_str());
-    display_.print(3, cm.is_time_valid() ? "SNTP: synced" : "SNTP: not synced");
-    display_.print(5, "Press to return");
+    display_.print(3, cm.is_time_valid() ? "SNTP: synced" : "SNTP: no sync");
     wait_for_dismiss();
     render();
 }
@@ -251,7 +323,7 @@ void Menu::show_time_screen(ClockManager& cm) {
 void Menu::show_info_screen(ClockManager& cm, Networking& net) {
     char buf[20];
     display_.clear();
-    display_.print(0, "About");
+    display_.print(0, center_str("About").c_str());
     display_.print(1, "Clock Driver v1");
     display_.print(2, "ESP32-S3");
     uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
@@ -260,7 +332,6 @@ void Menu::show_info_screen(ClockManager& cm, Networking& net) {
              (unsigned long)((uptime_s % 3600) / 60));
     display_.print(3, buf);
     display_.print(4, net.is_connected() ? "Net: OK" : "Net: offline");
-    display_.print(5, "Press to return");
     wait_for_dismiss();
     render();
 }

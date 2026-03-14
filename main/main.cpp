@@ -51,6 +51,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "driver/gpio.h"
 
 #include "clock_manager.h"
 #include "networking.h"
@@ -76,6 +77,8 @@ static constexpr gpio_num_t  I2C_SCL             = GPIO_NUM_9;
 static constexpr uint8_t     SEESAW_ADDR         = 0x36;
 static constexpr uint32_t    SEESAW_HZ           = 100'000;
 static constexpr uint32_t    LONG_PRESS_MS       = 800;
+static constexpr gpio_num_t  BUTTON_A            = GPIO_NUM_10;  // menu previous
+static constexpr gpio_num_t  BUTTON_B            = GPIO_NUM_11;  // menu next
 
 // ── Shared system objects (static lifetime) ───────────────────────────────────
 
@@ -98,20 +101,16 @@ static bool s_encoder_ok = false;
 // the I2C mutex rather than relying on a flag encoder_task cannot set
 // (it is blocked in the call chain that leads here).
 
+// Returns raw button level (true = held down).
+// wait_for_dismiss() in Menu tracks hold duration to detect long press.
 static bool dismiss_fn()
 {
     if (!s_encoder_ok) return false;
-    static bool last_btn = false;
-
     SemaphoreHandle_t mtx = s_display.getBusMutex();
     xSemaphoreTake(mtx, portMAX_DELAY);
-    bool btn_now = s_encoder.button_pressed();
+    bool btn = s_encoder.button_pressed();
     xSemaphoreGive(mtx);
-
-    // Rising edge = button released after a press → dismiss
-    bool edge = (!btn_now && last_btn);
-    last_btn = btn_now;
-    return edge;
+    return btn;
 }
 
 // ── Encoder poll task ─────────────────────────────────────────────────────────
@@ -126,6 +125,10 @@ static void encoder_task(void* /*arg*/)
     bool     btn_last         = false;
     uint32_t btn_press_tick   = 0;
     bool     long_press_fired = false;
+    bool     btnA_last        = false;
+    bool     btnB_last        = false;
+    bool     both_fired       = false;
+    int      h_scroll_counter = 0;
 
     SemaphoreHandle_t mtx = s_display.getBusMutex();
 
@@ -133,26 +136,70 @@ static void encoder_task(void* /*arg*/)
         int8_t delta   = 0;
         bool   btn_now = false;
 
-        // ── Read encoder under I2C mutex (only if hardware is ready) ──────────
+        // ── Read encoder under I2C mutex ──────────────────────────────────────
         if (s_encoder_ok) {
             xSemaphoreTake(mtx, portMAX_DELAY);
             delta   = s_encoder.read_delta();
             btn_now = s_encoder.button_pressed();
             xSemaphoreGive(mtx);
-
         }
 
-        // ── Rotation ──────────────────────────────────────────────────────────
+        // ── Read hardware buttons (active-low, pull-up) ───────────────────────
+        bool btnA = (gpio_get_level(BUTTON_A) == 0);
+        bool btnB = (gpio_get_level(BUTTON_B) == 0);
+
+        bool btnA_edge = (btnA && !btnA_last);
+        bool btnB_edge = (btnB && !btnB_last);
+
+        // ── Wake-up suppression ───────────────────────────────────────────────
+        // Any input wakes the display; the triggering gesture is consumed.
+        if ((delta != 0 || btn_now || btnA || btnB) && s_menu.is_blanked()) {
+            s_menu.wake();
+            btn_last         = btn_now;
+            btnA_last        = btnA;
+            btnB_last        = btnB;
+            long_press_fired = true;   // suppress press cycle until release
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        btnA_last = btnA;
+        btnB_last = btnB;
+
+        // ── Rotation ─────────────────────────────────────────────────────────
         if (delta != 0) {
             s_menu.wake();
-            if (!s_menu.is_blanked()) {
-                if (delta > 0) s_menu.next();
-                else           s_menu.previous();
+            if (delta > 0) { s_menu.next();     s_menu.render_scrolled(true);  }
+            else            { s_menu.previous(); s_menu.render_scrolled(false); }
+            h_scroll_counter = 0;
+        }
+
+        // ── Hardware buttons (GPIO10=prev, GPIO11=next, both=select) ─────────
+        if (btnA && btnB) {
+            if (!both_fired) {
+                both_fired = true;
+                s_menu.wake();
+                s_menu.select();
                 s_menu.render();
+                h_scroll_counter = 0;
+            }
+        } else {
+            both_fired = false;
+            if (btnA_edge) {
+                s_menu.wake();
+                s_menu.previous();
+                s_menu.render_scrolled(false);
+                h_scroll_counter = 0;
+            }
+            if (btnB_edge) {
+                s_menu.wake();
+                s_menu.next();
+                s_menu.render_scrolled(true);
+                h_scroll_counter = 0;
             }
         }
 
-        // ── Button ────────────────────────────────────────────────────────────
+        // ── Encoder button ────────────────────────────────────────────────────
         if (btn_now && !btn_last) {
             // Falling edge — button down
             btn_press_tick   = xTaskGetTickCount();
@@ -160,29 +207,37 @@ static void encoder_task(void* /*arg*/)
             s_menu.wake();
 
         } else if (btn_now && btn_last && !long_press_fired) {
-            // Held — check for long press threshold
+            // Held — check for long press (back)
             uint32_t held_ms = (xTaskGetTickCount() - btn_press_tick)
                                * portTICK_PERIOD_MS;
             if (held_ms >= LONG_PRESS_MS) {
                 if (!s_menu.is_blanked()) {
                     s_menu.back();
-                    s_menu.render();
+                    s_menu.render_scrolled(false);
+                    h_scroll_counter = 0;
                 }
                 long_press_fired = true;
             }
 
         } else if (!btn_now && btn_last && !long_press_fired) {
-            // Rising edge — short press release → select
-            // NOTE: if the selected item shows an info screen, select() will
-            // block here (inside wait_for_dismiss) until button pressed again.
-            // That is intentional — the encoder task IS the dismiss poller.
+            // Rising edge — short press → select
+            // If selected item shows an info screen, select() blocks here
+            // (inside wait_for_dismiss) — encoder_task IS the dismiss poller.
             if (!s_menu.is_blanked()) {
                 s_menu.select();
                 s_menu.render();
+                h_scroll_counter = 0;
             }
         }
 
         btn_last = btn_now;
+
+        // ── Horizontal scroll tick (every ~300 ms) ────────────────────────────
+        if (++h_scroll_counter >= 15) {
+            h_scroll_counter = 0;
+            s_menu.tick_h_scroll();
+        }
+
         vTaskDelay(pdMS_TO_TICKS(20));   // 50 Hz
     }
 }
@@ -247,6 +302,20 @@ extern "C" void app_main()
         ESP_LOGW(TAG, "LED strip init failed — continuing without LEDs");
     }
     s_leds.start();
+
+    // ── 2c. Hardware buttons (active-low, pull-up) ────────────────────────────
+    {
+        const gpio_config_t btn_cfg = {
+            .pin_bit_mask = (1ULL << BUTTON_A) | (1ULL << BUTTON_B),
+            .mode         = GPIO_MODE_INPUT,
+            .pull_up_en   = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&btn_cfg);
+        ESP_LOGI(TAG, "Buttons: A=GPIO%d (prev), B=GPIO%d (next)",
+                 (int)BUTTON_A, (int)BUTTON_B);
+    }
 
     // ── 3. Menu — wire dismiss, then build full tree ──────────────────────────
     // dismiss_fn polls the encoder directly (with mutex) so it works even

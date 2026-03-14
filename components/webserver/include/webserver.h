@@ -26,6 +26,7 @@ private:
     static esp_err_t on_root(httpd_req_t* req);
     static esp_err_t on_api_status(httpd_req_t* req);
     static esp_err_t on_api_cmd(httpd_req_t* req);
+    static esp_err_t on_api_cfg(httpd_req_t* req);
     static esp_err_t on_ws(httpd_req_t* req);
 
     // Background tasks
@@ -44,7 +45,8 @@ private:
     httpd_handle_t server_          = nullptr;
     TaskHandle_t   ws_task_handle_  = nullptr;
     TaskHandle_t   cmd_task_handle_ = nullptr;
-    QueueHandle_t  cmd_queue_       = nullptr;  // depth-1 queue of 32-char cmd names
+    QueueHandle_t  cmd_queue_          = nullptr;  // depth-1 queue of 32-char cmd names
+    int            pending_observed_min_ = -1;     // for set-time with known position
 
     static WebServer* s_instance_;
 };

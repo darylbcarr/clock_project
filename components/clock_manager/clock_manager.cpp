@@ -361,6 +361,7 @@ int ClockManager::cmd_measure_sensor_average()
     sensor_.led_on();
     int avg = sensor_.read_average(SENSOR_CALIB_SAMPLES);
     sensor_.led_off();
+    last_sensor_adc_ = avg;
     ESP_LOGI(TAG, "cmd_measure_sensor_average: avg=%d  threshold=%d",
              avg, sensor_.get_threshold());
     return avg;

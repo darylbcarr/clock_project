@@ -89,6 +89,10 @@ void StepperMotor::apply_phase(int phase_index)
 
 void StepperMotor::step_once(StepDirection direction)
 {
+    if (reverse_) {
+        direction = (direction == StepDirection::FORWARD)
+                    ? StepDirection::BACKWARD : StepDirection::FORWARD;
+    }
     current_phase_ = (current_phase_ + static_cast<int>(direction) + HALF_STEP_PHASES)
                      % HALF_STEP_PHASES;
     apply_phase(current_phase_);

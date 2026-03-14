@@ -43,7 +43,7 @@ class LedManager;
 
 class Menu {
 public:
-    static constexpr uint8_t MAX_VISIBLE_ITEMS = 6;
+    static constexpr uint8_t MAX_VISIBLE_ITEMS = 7;
 
     /**
      * Callback that returns true when the user has signalled "dismiss"
@@ -72,6 +72,19 @@ public:
     void select();
     void back();
     void render();
+
+    /**
+     * @brief Animate a hardware scroll (UP when going_next, DOWN otherwise)
+     *        then render the new state.  Call instead of render() after
+     *        next() / previous() / back() for a slide effect.
+     */
+    void render_scrolled(bool going_next);
+
+    /**
+     * @brief Advance horizontal scroll on the selected item (if its name
+     *        exceeds 16 chars).  Call every ~300 ms from encoder_task.
+     */
+    void tick_h_scroll();
 
     // ── Wiring ────────────────────────────────────────────────────────────────
     /**
@@ -113,6 +126,10 @@ private:
 
     void                        updateDisplayStart();
     std::vector<std::string>    getVisibleItems() const;
+
+    // Horizontal scroll state for the currently selected item
+    int h_scroll_offset_ = 0;
+    int h_scroll_dir_    = 1;
 
     // Sub-screens (blocking, return to menu on button)
     void show_info_screen(ClockManager& cm, Networking& net);

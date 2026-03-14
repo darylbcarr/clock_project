@@ -46,9 +46,10 @@ public:
     void set_active_len(Target t, uint16_t len);
     void next_effect(Target t);
 
-    Effect  get_effect(int idx) const;
-    uint8_t get_brightness(int idx) const;
-    void    get_color(int idx, uint8_t& r, uint8_t& g, uint8_t& b) const;
+    Effect   get_effect(int idx)     const;
+    uint8_t  get_brightness(int idx) const;
+    uint16_t get_active_len(int idx) const;
+    void     get_color(int idx, uint8_t& r, uint8_t& g, uint8_t& b) const;
 
 private:
     struct StripState {

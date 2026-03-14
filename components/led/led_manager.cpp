@@ -195,6 +195,12 @@ uint8_t LedManager::get_brightness(int idx) const
     return strips_[idx].brightness;
 }
 
+uint16_t LedManager::get_active_len(int idx) const
+{
+    if (idx < 0 || idx >= STRIP_COUNT) return 0;
+    return strips_[idx].active_len;
+}
+
 void LedManager::get_color(int idx, uint8_t& r, uint8_t& g, uint8_t& b) const
 {
     if (idx < 0 || idx >= STRIP_COUNT) { r = g = b = 0; return; }

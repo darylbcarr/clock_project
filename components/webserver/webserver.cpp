@@ -47,6 +47,7 @@ void WebServer::start()
     httpd_uri_t root = { "/",           HTTP_GET,  on_root,       this };
     httpd_uri_t stat = { "/api/status", HTTP_GET,  on_api_status, this };
     httpd_uri_t cmd  = { "/api/cmd",    HTTP_POST, on_api_cmd,    this };
+    httpd_uri_t cfg_uri = { "/api/cfg",  HTTP_POST, on_api_cfg,    this };
     httpd_uri_t ws   = {
         .uri      = "/ws",
         .method   = HTTP_GET,
@@ -58,6 +59,7 @@ void WebServer::start()
     httpd_register_uri_handler(server_, &root);
     httpd_register_uri_handler(server_, &stat);
     httpd_register_uri_handler(server_, &cmd);
+    httpd_register_uri_handler(server_, &cfg_uri);
     httpd_register_uri_handler(server_, &ws);
 
     xTaskCreate(ws_push_task,  "ws_push",  4096, this, 2, &ws_task_handle_);
@@ -121,22 +123,52 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
         return ESP_FAIL;
     }
 
-    // Colour command is handled inline (not queued) since it's fast
-    if (strcmp(cmd_name, "led-color") == 0) {
+    // ── Inline (fast, not queued) handlers ──────────────────────────────────
+
+    // Per-strip or both-strip colour (led-color, led1-color, led2-color)
+    auto handle_color = [&](LedManager::Target tgt) -> bool {
         cJSON* rj = cJSON_GetObjectItem(body, "r");
         cJSON* gj = cJSON_GetObjectItem(body, "g");
         cJSON* bj = cJSON_GetObjectItem(body, "b");
         if (cJSON_IsNumber(rj) && cJSON_IsNumber(gj) && cJSON_IsNumber(bj)) {
-            self->leds_.set_color(LedManager::Target::BOTH,
+            self->leds_.set_color(tgt,
                 (uint8_t)rj->valueint,
                 (uint8_t)gj->valueint,
                 (uint8_t)bj->valueint);
+            return true;
         }
+        return false;
+    };
+
+    // Per-strip brightness
+    auto handle_bright = [&](LedManager::Target tgt) -> bool {
+        cJSON* bj = cJSON_GetObjectItem(body, "brightness");
+        if (cJSON_IsNumber(bj)) {
+            self->leds_.set_brightness(tgt, (uint8_t)bj->valueint);
+            return true;
+        }
+        return false;
+    };
+
+    bool handled_inline = false;
+    if      (strcmp(cmd_name, "led-color")  == 0) handled_inline = handle_color(LedManager::Target::BOTH);
+    else if (strcmp(cmd_name, "led1-color") == 0) handled_inline = handle_color(LedManager::Target::STRIP_1);
+    else if (strcmp(cmd_name, "led2-color") == 0) handled_inline = handle_color(LedManager::Target::STRIP_2);
+    else if (strcmp(cmd_name, "led1-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_1);
+    else if (strcmp(cmd_name, "led2-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_2);
+
+    if (handled_inline) {
         cJSON_Delete(body);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-        return httpd_resp_send(req, "{\"ok\":true,\"msg\":\"Colour set\"}",
+        return httpd_resp_send(req, "{\"ok\":true,\"msg\":\"OK\"}",
                                HTTPD_RESP_USE_STRLEN);
+    }
+
+    // set-time with optional observed minute position
+    if (strcmp(cmd_name, "set-time") == 0) {
+        cJSON* mj = cJSON_GetObjectItem(body, "observed_min");
+        self->pending_observed_min_ = cJSON_IsNumber(mj) ? (int)mj->valueint : -1;
     }
 
     // Copy name to a fixed-size buffer (queue items are 32 bytes, value-copied)
@@ -153,6 +185,39 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
         ? "{\"ok\":true,\"msg\":\"Command accepted\"}"
         : "{\"ok\":false,\"msg\":\"Busy \xe2\x80\x94 try again\"}";
     return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
+{
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+
+    char buf[256] = {};
+    int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+
+    cJSON* body = cJSON_Parse(buf);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON* j;
+    if ((j = cJSON_GetObjectItem(body, "strip1_len")) && cJSON_IsNumber(j))
+        self->leds_.set_active_len(LedManager::Target::STRIP_1, (uint16_t)j->valueint);
+    if ((j = cJSON_GetObjectItem(body, "strip2_len")) && cJSON_IsNumber(j))
+        self->leds_.set_active_len(LedManager::Target::STRIP_2, (uint16_t)j->valueint);
+    if ((j = cJSON_GetObjectItem(body, "motor_reverse")) && cJSON_IsBool(j))
+        self->clock_mgr_.set_motor_reverse(cJSON_IsTrue(j));
+    if ((j = cJSON_GetObjectItem(body, "sensor_offset")) && cJSON_IsNumber(j))
+        self->clock_mgr_.cmd_set_sensor_offset((int)j->valueint);
+
+    cJSON_Delete(body);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t WebServer::on_ws(httpd_req_t* req)
@@ -241,7 +306,7 @@ void WebServer::dispatch_cmd(const char* cmd)
 {
     ESP_LOGI(TAG, "Executing command: %s", cmd);
 
-    if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(-1);
+    if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(pending_observed_min_);
     else if (strcmp(cmd, "advance")        == 0) clock_mgr_.cmd_test_advance();
     else if (strcmp(cmd, "step-fwd")       == 0) clock_mgr_.cmd_microstep(8, true);
     else if (strcmp(cmd, "step-bwd")       == 0) clock_mgr_.cmd_microstep(8, false);
@@ -257,6 +322,21 @@ void WebServer::dispatch_cmd(const char* cmd)
     else if (strcmp(cmd, "led-wipe")       == 0) leds_.set_effect(LedManager::Target::BOTH, LedManager::Effect::WIPE);
     else if (strcmp(cmd, "led-comet")      == 0) leds_.set_effect(LedManager::Target::BOTH, LedManager::Effect::COMET);
     else if (strcmp(cmd, "led-next")       == 0) leds_.next_effect(LedManager::Target::BOTH);
+    // Per-strip effects
+    else if (strcmp(cmd, "led1-static")   == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::STATIC);
+    else if (strcmp(cmd, "led1-breathe")  == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::BREATHE);
+    else if (strcmp(cmd, "led1-rainbow")  == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::RAINBOW);
+    else if (strcmp(cmd, "led1-chase")    == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::CHASE);
+    else if (strcmp(cmd, "led1-sparkle")  == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::SPARKLE);
+    else if (strcmp(cmd, "led1-wipe")     == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::WIPE);
+    else if (strcmp(cmd, "led1-comet")    == 0) leds_.set_effect(LedManager::Target::STRIP_1, LedManager::Effect::COMET);
+    else if (strcmp(cmd, "led2-static")   == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::STATIC);
+    else if (strcmp(cmd, "led2-breathe")  == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::BREATHE);
+    else if (strcmp(cmd, "led2-rainbow")  == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::RAINBOW);
+    else if (strcmp(cmd, "led2-chase")    == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::CHASE);
+    else if (strcmp(cmd, "led2-sparkle")  == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::SPARKLE);
+    else if (strcmp(cmd, "led2-wipe")     == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::WIPE);
+    else if (strcmp(cmd, "led2-comet")    == 0) leds_.set_effect(LedManager::Target::STRIP_2, LedManager::Effect::COMET);
     else if (strcmp(cmd, "led-bright-up")  == 0) {
         uint8_t b = leds_.get_brightness(0);
         leds_.set_brightness(LedManager::Target::BOTH, b > 230 ? 255 : b + 25);
@@ -285,11 +365,13 @@ char* WebServer::build_status_json()
     cJSON_AddNumberToObject(root, "displayed_min",clock_mgr_.displayed_minute());
     cJSON_AddBoolToObject  (root, "sntp",         clock_mgr_.is_time_valid());
     cJSON_AddStringToObject(root, "iana_tz",      net.iana_tz[0] ? net.iana_tz : "");
+    cJSON_AddStringToObject(root, "posix_tz",     net.posix_tz[0] ? net.posix_tz : "");
 
     // Clock details
     cJSON_AddNumberToObject(root, "sensor_offset_sec", clock_mgr_.sensor_offset_sec());
-    cJSON_AddBoolToObject  (root, "motor_powered",     false);   // getter to be added
-    cJSON_AddNumberToObject(root, "step_delay_us",     2000);    // from firmware constant
+    cJSON_AddNumberToObject(root, "sensor_adc",        clock_mgr_.last_sensor_adc());
+    cJSON_AddBoolToObject  (root, "motor_reverse",     clock_mgr_.is_motor_reverse());
+    cJSON_AddStringToObject(root, "fw_version",        "1.0.0");
 
     // Network / WiFi
     cJSON_AddBoolToObject  (root, "wifi",        net.wifi_connected);
@@ -321,6 +403,8 @@ char* WebServer::build_status_json()
                     LedManager::effect_name(leds_.get_effect(i)));
                 cJSON_AddNumberToObject(strip, "brightness",
                     leds_.get_brightness(i));
+                cJSON_AddNumberToObject(strip, "active_len",
+                    leds_.get_active_len(i));
                 cJSON_AddNumberToObject(strip, "r", r);
                 cJSON_AddNumberToObject(strip, "g", g);
                 cJSON_AddNumberToObject(strip, "b", b);

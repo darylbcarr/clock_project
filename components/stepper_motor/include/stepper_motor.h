@@ -115,6 +115,10 @@ public:
 
     uint32_t get_step_delay() const { return step_delay_us_; }
 
+    /** @brief Reverse the motor direction without swapping wires. */
+    void set_reverse(bool rev) { reverse_ = rev; }
+    bool is_reverse()    const { return reverse_; }
+
     /**
      * @brief Return the cumulative step count since construction (or reset).
      */
@@ -150,6 +154,7 @@ private:
     int      current_phase_;   ///< Index into half_step_sequence_ [0..7]
     int64_t  total_steps_;
     bool     powered_;
+    bool     reverse_ = false;
 
     /// Half-step sequence: [IN1, IN2, IN3, IN4]
     static const uint8_t half_step_sequence_[HALF_STEP_PHASES][4];

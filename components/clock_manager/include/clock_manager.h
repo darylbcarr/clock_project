@@ -211,6 +211,12 @@ public:
     int  sensor_offset_sec()  const { return sensor_offset_sec_; }
     bool is_running()         const { return task_handle_ != nullptr; }
 
+    void set_motor_reverse(bool rev) { motor_.set_reverse(rev); }
+    bool is_motor_reverse()    const { return motor_.is_reverse(); }
+
+    /** Last ADC value returned by cmd_measure_sensor_average(); 0 until first call. */
+    int  last_sensor_adc()     const { return last_sensor_adc_; }
+
 private:
     // ── Internal helpers ────────────────────────────────────────────────────
     void tick();                              ///< Called every minute by the timer task
@@ -227,6 +233,7 @@ private:
     // ── State ────────────────────────────────────────────────────────────────
     int     displayed_minute_;   ///< What minute the hand currently shows (0-59)
     int     sensor_offset_sec_;  ///< User-calibrated sensor-to-hour offset (s)
+    int     last_sensor_adc_ = 0;
     bool    time_valid_;
     bool    running_;
 
