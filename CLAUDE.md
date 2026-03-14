@@ -8,21 +8,17 @@ ESP32-S3 firmware (ESP-IDF v5.4.1, C++17) for a stepper-motor-driven analog cloc
 
 ## Build Commands
 
+`build.sh` wraps all ESP-IDF environment setup — use it instead of calling `idf.py` directly.
+
 ```bash
-# One-time: source ESP-IDF environment
-. $IDF_PATH/export.sh
-
-# Configure target (only needed once per workspace)
-idf.py set-target esp32s3
-
 # Build
-idf.py build
+./build.sh build
 
-# Flash and open monitor (adjust port as needed)
-idf.py -p /dev/ttyUSB0 flash monitor
+# Flash and open monitor
+./build.sh -p /dev/ttyUSB0 flash monitor
 
-# Build only (no flash)
-idf.py build
+# Menuconfig
+./build.sh menuconfig
 
 # Open serial monitor without flashing
 idf.py -p /dev/ttyUSB0 monitor
