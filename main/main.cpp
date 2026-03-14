@@ -102,10 +102,15 @@ static bool s_encoder_ok = false;
 // the I2C mutex rather than relying on a flag encoder_task cannot set
 // (it is blocked in the call chain that leads here).
 
-// Returns raw button level (true = held down).
-// wait_for_dismiss() in Menu tracks hold duration to detect long press.
+// Returns true while a dismiss gesture is held.
+// wait_for_dismiss() in Menu accumulates hold duration and fires after 800ms.
+// Two sources: encoder button (I2C) OR both hardware buttons pressed together.
 static bool dismiss_fn()
 {
+    // Both GPIO buttons held (no I2C needed)
+    if ((gpio_get_level(BUTTON_A) == 0) && (gpio_get_level(BUTTON_B) == 0))
+        return true;
+    // Encoder button
     if (!s_encoder_ok) return false;
     SemaphoreHandle_t mtx = s_display.getBusMutex();
     xSemaphoreTake(mtx, portMAX_DELAY);
@@ -128,7 +133,10 @@ static void encoder_task(void* /*arg*/)
     bool     long_press_fired = false;
     bool     btnA_last        = false;
     bool     btnB_last        = false;
-    bool     both_fired       = false;
+    uint32_t btnA_press_tick  = 0;
+    uint32_t btnB_press_tick  = 0;
+    bool     btnA_long_fired  = false;
+    bool     btnB_long_fired  = false;
     int      h_scroll_counter = 0;
 
     SemaphoreHandle_t mtx = s_display.getBusMutex();
@@ -149,8 +157,11 @@ static void encoder_task(void* /*arg*/)
         bool btnA = (gpio_get_level(BUTTON_A) == 0);
         bool btnB = (gpio_get_level(BUTTON_B) == 0);
 
-        bool btnA_edge = (btnA && !btnA_last);
-        bool btnB_edge = (btnB && !btnB_last);
+        bool btnA_fall = (btnA  && !btnA_last);   // press edge
+        bool btnA_rise = (!btnA &&  btnA_last);   // release edge
+        bool btnB_fall = (btnB  && !btnB_last);
+        bool btnB_rise = (!btnB &&  btnB_last);
+        bool both      = btnA && btnB;
 
         // ── Wake-up suppression ───────────────────────────────────────────────
         // Any input wakes the display; the triggering gesture is consumed.
@@ -159,13 +170,12 @@ static void encoder_task(void* /*arg*/)
             btn_last         = btn_now;
             btnA_last        = btnA;
             btnB_last        = btnB;
-            long_press_fired = true;   // suppress press cycle until release
+            long_press_fired = true;   // suppress encoder press cycle until release
+            btnA_long_fired  = true;   // suppress GPIO press cycle until release
+            btnB_long_fired  = true;
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-
-        btnA_last = btnA;
-        btnB_last = btnB;
 
         // ── Rotation ─────────────────────────────────────────────────────────
         if (delta != 0) {
@@ -175,30 +185,67 @@ static void encoder_task(void* /*arg*/)
             h_scroll_counter = 0;
         }
 
-        // ── Hardware buttons (GPIO10=prev, GPIO11=next, both=select) ─────────
-        if (btnA && btnB) {
-            if (!both_fired) {
-                both_fired = true;
-                s_menu.wake();
-                s_menu.select();
-                s_menu.render();
-                h_scroll_counter = 0;
-            }
+        // ── Hardware buttons ──────────────────────────────────────────────────
+        // Short press A → previous,  Short press B → next
+        // Long press A or B (≥800ms) → select (simulates encoder button)
+        // Both pressed simultaneously → reserved for dismiss_fn (info screens)
+        if (both) {
+            // Suppress individual actions while both are held so that releasing
+            // to a single button doesn't trigger that button's short/long press.
+            btnA_long_fired = true;
+            btnB_long_fired = true;
         } else {
-            both_fired = false;
-            if (btnA_edge) {
+            // ── Falling edges (press start) ───────────────────────────────────
+            if (btnA_fall) {
+                btnA_press_tick = xTaskGetTickCount();
+                btnA_long_fired = false;
+                s_menu.wake();
+            }
+            if (btnB_fall) {
+                btnB_press_tick = xTaskGetTickCount();
+                btnB_long_fired = false;
+                s_menu.wake();
+            }
+            // ── Long-press detection (while held) ─────────────────────────────
+            if (btnA && !btnA_long_fired) {
+                uint32_t held = (xTaskGetTickCount() - btnA_press_tick) * portTICK_PERIOD_MS;
+                if (held >= LONG_PRESS_MS) {
+                    btnA_long_fired = true;
+                    if (!s_menu.is_blanked()) {
+                        s_menu.select();
+                        s_menu.render();
+                        h_scroll_counter = 0;
+                    }
+                }
+            }
+            if (btnB && !btnB_long_fired) {
+                uint32_t held = (xTaskGetTickCount() - btnB_press_tick) * portTICK_PERIOD_MS;
+                if (held >= LONG_PRESS_MS) {
+                    btnB_long_fired = true;
+                    if (!s_menu.is_blanked()) {
+                        s_menu.select();
+                        s_menu.render();
+                        h_scroll_counter = 0;
+                    }
+                }
+            }
+            // ── Rising edges (release) → short press if no long press fired ──
+            if (btnA_rise && !btnA_long_fired) {
                 s_menu.wake();
                 s_menu.previous();
                 s_menu.render_scrolled(false);
                 h_scroll_counter = 0;
             }
-            if (btnB_edge) {
+            if (btnB_rise && !btnB_long_fired) {
                 s_menu.wake();
                 s_menu.next();
                 s_menu.render_scrolled(true);
                 h_scroll_counter = 0;
             }
         }
+
+        btnA_last = btnA;
+        btnB_last = btnB;
 
         // ── Encoder button ────────────────────────────────────────────────────
         if (btn_now && !btn_last) {
@@ -363,7 +410,7 @@ extern "C" void app_main()
             .intr_type    = GPIO_INTR_DISABLE,
         };
         gpio_config(&btn_cfg);
-        ESP_LOGI(TAG, "Buttons: A=GPIO%d (prev), B=GPIO%d (next)",
+        ESP_LOGI(TAG, "Buttons: A=GPIO%d (prev/long=select), B=GPIO%d (next/long=select), A+B=dismiss",
                  (int)BUTTON_A, (int)BUTTON_B);
     }
 
@@ -406,7 +453,7 @@ extern "C" void app_main()
     s_display.print(0, " Clock Driver");
     s_display.print(2, " Rotate: navigate");
     s_display.print(3, " Press:  select");
-    s_display.print(4, " Hold:   back");
+    s_display.print(4, " Hold:   back/select");
     vTaskDelay(pdMS_TO_TICKS(2500));
 
     s_menu.render();
