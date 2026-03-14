@@ -326,7 +326,7 @@ input[type=range]::-webkit-slider-thumb {
   <!-- Strip 1 -->
   <div class="card" id="strip1-card">
     <div class="strip-header">
-      <span class="strip-name">Strip 1</span>
+      <span class="strip-name">Ring</span>
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="swatch-box" id="sw1"></span>
         <span class="effect-info" id="fx1-label">—</span>
@@ -335,7 +335,8 @@ input[type=range]::-webkit-slider-thumb {
     </div>
     <div class="slider-row">
       <label>Brightness</label>
-      <input type="range" id="bright1" min="0" max="255" value="128" oninput="doBright(1,this.value)">
+      <input type="range" id="bright1" min="0" max="255" value="128"
+             onpointerdown="sliderActive[0]=true" oninput="doBright(1,this.value)">
     </div>
     <div class="card-title" style="margin-top:10px;">Effects</div>
     <div class="fx-grid" id="fx1-grid">
@@ -354,7 +355,7 @@ input[type=range]::-webkit-slider-thumb {
   <!-- Strip 2 -->
   <div class="card" id="strip2-card">
     <div class="strip-header">
-      <span class="strip-name">Strip 2</span>
+      <span class="strip-name">Base</span>
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="swatch-box" id="sw2"></span>
         <span class="effect-info" id="fx2-label">—</span>
@@ -363,7 +364,8 @@ input[type=range]::-webkit-slider-thumb {
     </div>
     <div class="slider-row">
       <label>Brightness</label>
-      <input type="range" id="bright2" min="0" max="255" value="128" oninput="doBright(2,this.value)">
+      <input type="range" id="bright2" min="0" max="255" value="128"
+             onpointerdown="sliderActive[1]=true" oninput="doBright(2,this.value)">
     </div>
     <div class="card-title" style="margin-top:10px;">Effects</div>
     <div class="fx-grid" id="fx2-grid">
@@ -604,6 +606,17 @@ let brightTimer1 = null, brightTimer2 = null;
 let cfgOffset = 0;
 let lastData = {};
 
+// Config fields that require explicit Save/Apply should only be populated
+// once on first load, then only refreshed when the server value actually
+// changes (e.g. via UART console) — never during normal 1-second WS pushes.
+let cfgInitialized = false;
+let serverCfg = {};   // last values seen FROM the server for config fields
+
+// Brightness sliders: skip WS updates while user is actively dragging.
+let sliderActive = [false, false];
+document.addEventListener('pointerup',     () => { sliderActive = [false, false]; });
+document.addEventListener('pointercancel', () => { sliderActive = [false, false]; });
+
 // ── Navigation ───────────────────────────────────────────────────────────────
 function nav(id) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -712,8 +725,11 @@ function doBright(n, val) {
 
 function applyStrip(n, s) {
   const pct = Math.round((s.brightness || 0) / 255 * 100);
-  document.getElementById('bright' + n).value = s.brightness || 0;
-  document.getElementById('bright' + n + '-pct').textContent = pct + '%';
+  // Skip brightness slider update while user is actively dragging it
+  if (!sliderActive[n - 1]) {
+    document.getElementById('bright' + n).value = s.brightness || 0;
+    document.getElementById('bright' + n + '-pct').textContent = pct + '%';
+  }
   document.getElementById('sw' + n).style.background = 'rgb(' + s.r + ',' + s.g + ',' + s.b + ')';
   document.getElementById('fx' + n + '-label').textContent = s.effect || '—';
   // Highlight active effect button
@@ -862,28 +878,64 @@ function applyData(d) {
   setText('inf-tz-iana', d.iana_tz || '—');
   setText('inf-tz-posix', d.posix_tz || '—');
 
-  // Config sync (once, on first data)
-  if (d.sensor_offset_sec !== undefined && cfgOffset === 0) {
-    cfgOffset = d.sensor_offset_sec;
-    document.getElementById('cfg-offset-val').textContent = cfgOffset;
-  }
-  if (d.step_delay_us) {
-    document.getElementById('cfg-step-delay').value = d.step_delay_us;
-    updateSpeedLabel(d.step_delay_us);
-  }
-  if (d.ssid && !document.getElementById('cfg-ssid').value) {
-    document.getElementById('cfg-ssid').value = d.ssid;
-  }
-  if (d.leds) {
-    if (d.leds.strip1 && d.leds.strip1.active_len)
-      document.getElementById('cfg-s1len').value = d.leds.strip1.active_len;
-    if (d.leds.strip2 && d.leds.strip2.active_len)
-      document.getElementById('cfg-s2len').value = d.leds.strip2.active_len;
-  }
-  if (d.motor_reverse !== undefined) {
+  // ── Config fields: init once, then only update on external server-side change ──
+  // This prevents WS pushes from stomping on values the user is editing.
+  const s1len = d.leds && d.leds.strip1 ? d.leds.strip1.active_len : undefined;
+  const s2len = d.leds && d.leds.strip2 ? d.leds.strip2.active_len : undefined;
+
+  if (!cfgInitialized) {
+    // First data received — populate all config inputs
+    if (d.sensor_offset_sec !== undefined) {
+      cfgOffset = d.sensor_offset_sec;
+      document.getElementById('cfg-offset-val').textContent = cfgOffset;
+    }
+    if (d.step_delay_us) {
+      document.getElementById('cfg-step-delay').value = d.step_delay_us;
+      updateSpeedLabel(d.step_delay_us);
+    }
+    if (d.ssid) document.getElementById('cfg-ssid').value = d.ssid;
+    if (s1len !== undefined) document.getElementById('cfg-s1len').value = s1len;
+    if (s2len !== undefined) document.getElementById('cfg-s2len').value = s2len;
     document.getElementById('dir-norm').classList.toggle('active', !d.motor_reverse);
     document.getElementById('dir-rev').classList.toggle('active', !!d.motor_reverse);
+
+    // Snapshot initial server state
+    serverCfg = {
+      sensor_offset: d.sensor_offset_sec,
+      step_delay_us: d.step_delay_us,
+      motor_reverse: d.motor_reverse,
+      s1len, s2len
+    };
+    cfgInitialized = true;
+
+  } else {
+    // Subsequent pushes — only update a config input if the server value
+    // actually changed (catches external changes via UART/console).
+    if (d.sensor_offset_sec !== undefined && d.sensor_offset_sec !== serverCfg.sensor_offset) {
+      cfgOffset = d.sensor_offset_sec;
+      document.getElementById('cfg-offset-val').textContent = cfgOffset;
+      serverCfg.sensor_offset = d.sensor_offset_sec;
+    }
+    if (d.step_delay_us && d.step_delay_us !== serverCfg.step_delay_us) {
+      document.getElementById('cfg-step-delay').value = d.step_delay_us;
+      updateSpeedLabel(d.step_delay_us);
+      serverCfg.step_delay_us = d.step_delay_us;
+    }
+    if (d.motor_reverse !== undefined && d.motor_reverse !== serverCfg.motor_reverse) {
+      document.getElementById('dir-norm').classList.toggle('active', !d.motor_reverse);
+      document.getElementById('dir-rev').classList.toggle('active', !!d.motor_reverse);
+      serverCfg.motor_reverse = d.motor_reverse;
+    }
+    if (s1len !== undefined && s1len !== serverCfg.s1len) {
+      document.getElementById('cfg-s1len').value = s1len;
+      serverCfg.s1len = s1len;
+    }
+    if (s2len !== undefined && s2len !== serverCfg.s2len) {
+      document.getElementById('cfg-s2len').value = s2len;
+      serverCfg.s2len = s2len;
+    }
   }
+
   setText('cfg-adc-val', d.sensor_adc !== undefined ? d.sensor_adc : '—');
 }
 
