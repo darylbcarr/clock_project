@@ -284,11 +284,32 @@ void ClockManager::cmd_set_time(int obs_hour, int obs_min)
 
     if (delta == 0) {
         ESP_LOGI(TAG, "Hand already at correct position");
-    } else {
-        motor_.move_clock_minutes(delta);
-        displayed_hour_   = t.tm_hour % 12;
-        displayed_minute_ = t.tm_min;
+        xSemaphoreGive(mutex_);
+        ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+        return;
     }
+
+    // Move hands to the target captured above.
+    // This takes real time (~1.23 s per clock-minute at 2 ms/step), so by the
+    // time the motor stops, real time has advanced beyond the original target.
+    motor_.move_clock_minutes(delta);
+
+    // Re-read the clock and apply a small catch-up correction for the
+    // minutes that elapsed while the motor was running.
+    struct tm t2 = get_local_tm();
+    int actual_12h = (t2.tm_hour % 12) * 60 + t2.tm_min;
+    int correction = (actual_12h - target_12h + 720) % 720;
+
+    if (correction > 0) {
+        ESP_LOGI(TAG, "cmd_set_time: post-move correction %d min (motor elapsed time)",
+                 correction);
+        motor_.move_clock_minutes(correction);
+        // Re-read once more to get the settled time after correction
+        t2 = get_local_tm();
+    }
+
+    displayed_hour_   = t2.tm_hour % 12;
+    displayed_minute_ = t2.tm_min;
 
     xSemaphoreGive(mutex_);
     ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
