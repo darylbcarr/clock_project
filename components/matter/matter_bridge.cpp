@@ -346,8 +346,20 @@ void MatterBridge::event_cb(
     using namespace chip::DeviceLayer;
     if (!event) return;
     switch (event->Type) {
+        case DeviceEventType::kCHIPoBLEConnectionEstablished:
+            ESP_LOGI(TAG, ">>> BLE connection established (controller found device)");
+            break;
+        case DeviceEventType::kCHIPoBLEConnectionClosed:
+            ESP_LOGI(TAG, ">>> BLE connection closed");
+            break;
+        case DeviceEventType::kCHIPoBLEConnectionError:
+            ESP_LOGW(TAG, ">>> BLE connection error");
+            break;
         case DeviceEventType::kCommissioningComplete:
             ESP_LOGI(TAG, "Matter commissioning complete");
+            break;
+        case DeviceEventType::kFailSafeTimerExpired:
+            ESP_LOGW(TAG, ">>> Fail-safe timer expired (commissioning window timed out)");
             break;
         case DeviceEventType::kFabricRemoved:
             ESP_LOGW(TAG, "Matter fabric removed — ready to recommission");
