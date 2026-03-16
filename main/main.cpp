@@ -496,6 +496,7 @@ extern "C" void app_main()
     // ── 5. UART console ───────────────────────────────────────────────────────
     console_start(&s_clock, &s_net,
                   s_encoder_ok ? &s_encoder : nullptr,
+                  &s_matter,
                   s_display.getBusMutex(),
                   s_display.getBusHandle());
 

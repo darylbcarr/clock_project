@@ -45,6 +45,14 @@ public:
      */
     esp_err_t start();
 
+    /**
+     * @brief Re-open the BLE commissioning window (fast advertising, 3-minute timeout).
+     *        Safe to call on an uncommissioned device that has timed out of fast
+     *        advertising.  Prints the pairing codes at INFO level.
+     *        Has no effect if the device already has a commissioned fabric.
+     */
+    esp_err_t open_commissioning_window();
+
     /** Commissioning info for on-device display (PIN + discriminator). */
     struct CommissioningInfo {
         uint32_t pin_code;       ///< Setup PIN (e.g. 20202021 in dev mode)

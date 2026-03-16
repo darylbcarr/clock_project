@@ -28,6 +28,7 @@ static constexpr int          CONSOLE_LINE_MAX = 128;
 static ClockManager*           s_clock      = nullptr;
 static Networking*             s_net        = nullptr;
 static RotaryEncoder*          s_encoder    = nullptr;
+static MatterBridge*           s_matter     = nullptr;
 static SemaphoreHandle_t       s_bus_mutex  = nullptr;
 static i2c_master_bus_handle_t s_bus_handle = nullptr;
 
@@ -110,6 +111,7 @@ static void do_help()
         // "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
         "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
+        "  matter-pair             Reopen BLE commissioning window (fast advertising)\r\n"
         "  help                    Show this list\r\n"
     );
 }
@@ -297,6 +299,17 @@ static void dispatch(char* line)
         do_i2c_scan();
         return;
     }
+    if (strcmp(cmd, "matter-pair") == 0) {
+        if (!s_matter) { uart_puts("Matter not available.\r\n"); return; }
+        esp_err_t e = s_matter->open_commissioning_window();
+        if (e == ESP_OK)
+            uart_puts("BLE commissioning window reopened — fast advertising active.\r\n");
+        else if (e == ESP_ERR_INVALID_STATE)
+            uart_puts("Device already commissioned; remove it from Alexa first.\r\n");
+        else
+            uart_puts("Failed to open commissioning window (check log).\r\n");
+        return;
+    }
     if (strcmp(cmd, "help") == 0) {
         do_help();
         return;
@@ -324,12 +337,14 @@ static void console_task(void* /*arg*/)
 void console_start(ClockManager*           clock_mgr,
                    Networking*             net,
                    RotaryEncoder*          encoder,
+                   MatterBridge*           matter,
                    SemaphoreHandle_t       bus_mutex,
                    i2c_master_bus_handle_t bus_handle)
 {
     s_clock      = clock_mgr;
     s_net        = net;
     s_encoder    = encoder;
+    s_matter     = matter;
     s_bus_mutex  = bus_mutex;
     s_bus_handle = bus_handle;
 

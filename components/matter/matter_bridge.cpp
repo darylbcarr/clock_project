@@ -8,6 +8,7 @@
 #include <esp_log.h>
 #include <esp_matter_core.h>
 #include <app/server/Server.h>
+#include <app/server/CommissioningWindowManager.h>
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
@@ -368,6 +369,31 @@ esp_err_t MatterBridge::identify_cb(
     ESP_LOGI(TAG, "Identify ep%d (endpoint_id=%u) type=%d",
              ctx->idx, endpoint_id, (int)type);
     // Could briefly blink the relevant strip here if desired
+    return ESP_OK;
+}
+
+// ── open_commissioning_window ─────────────────────────────────────────────────
+
+esp_err_t MatterBridge::open_commissioning_window()
+{
+    if (is_commissioned()) {
+        ESP_LOGW(TAG, "Device already has a fabric — not opening commissioning window");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    using namespace chip;
+    auto& mgr = Server::GetInstance().GetCommissioningWindowManager();
+    CHIP_ERROR err = mgr.OpenBasicCommissioningWindow();
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "OpenBasicCommissioningWindow failed: %" CHIP_ERROR_FORMAT, err.Format());
+        return ESP_FAIL;
+    }
+
+    // Re-print pairing codes so the user can find them without scrolling.
+    auto info = get_commissioning_info();
+    ESP_LOGI(TAG, "BLE commissioning window reopened");
+    ESP_LOGI(TAG, "  PIN:  %lu   Disc: %u   Code: %s",
+             (unsigned long)info.pin_code, info.discriminator, manual_code_.c_str());
     return ESP_OK;
 }
 
