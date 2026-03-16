@@ -1,0 +1,80 @@
+❯ The names that Alexa sees: First Device, First Light, Second Light. How do I interpret these names and devices. I see First Light and Second Light are the 
+ lights. What exactly is First Device?                                                                                                                       
+
+● In Matter, a single physical device (the clock) is a Node containing multiple Endpoints:
+
+  ┌───────────┬───────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐    
+  │  Alexa    │   Matter entity   │                                                     What it is                                                      │
+  │   name    │                   │                                                                                                                     │    
+  ├───────────┼───────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ First     │ Endpoint 0 — Root │ The device itself. Contains Basic Information cluster (vendor, model, firmware version). Alexa surfaces it as a     │
+  │ Device    │  Node             │ controllable entity even though it's really just metadata.                                                          │
+  ├───────────┼───────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ First     │ Endpoint 1        │ Ring LED strip (LedManager STRIP_1, GPIO1)                                                                          │
+  │ Light     │                   │                                                                                                                     │
+  ├───────────┼───────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Second    │ Endpoint 2        │ Base LED strip (LedManager STRIP_2, GPIO2)                                                                          │
+  │ Light     │                   │                                                                                                                     │
+  └───────────┴───────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  "First Device" isn't really useful to control — it's the Matter node descriptor, not an actual light. Alexa happens to expose it because the root endpoint
+  has a device type cluster that Alexa treats as a thing. You can't do much useful with it.
+
+  The names ("First", "Second") are just Alexa's auto-generated defaults for unnamed devices. You can rename all three in the Alexa app to whatever you want
+  (e.g., "Clock Ring", "Clock Base") and Alexa will use those going forward.
+
+  If you want the device to advertise a meaningful name at the hardware level (so it shows up with that name on first discovery), you'd set node_label in the
+   Basic Information cluster config in matter_bridge.cpp:
+
+  esp_matter::node::config_t node_cfg = {};
+  strncpy(node_cfg.basic_information.node_label, "Analog Clock", sizeof(node_cfg.basic_information.node_label) - 1);
+
+  That would change "First Device" → "Analog Clock" on fresh pairing. The light endpoint names would still be Alexa defaults unless you also set their
+  node_label fields.
+
+--------------------------------
+                                                                                                                                                             
+● Clean build. Flash it:                                                                                                                                     
+                                                                                                                                                             
+  ./build.sh -p /dev/ttyUSB0 flash monitor                                                                                                                   
+                                                                                                                                                             
+  After flashing you'll need to remove and re-add in Alexa again (capability change requires re-discovery). The new FeatureMap will be 0x19 (HS+XY+CT), and
+  Alexa should now:                                                                                                                                          
+                                                                                     
+  - Show a color picker instead of just CT slider
+  - Send MoveToHueAndSaturation when you say "set to green" → you'll see W : Attribute 0x00000001 (CurrentSaturation) and 0x00000000 (CurrentHue) in the log
+  instead of the CT attribute
+
+  The root issue was that Alexa maps color names exclusively to MoveToHueAndSaturation commands — XY mode alone isn't enough. Without the HS feature bit in
+  FeatureMap/ColorCapabilities, Alexa treated the device as a white-spectrum-only light and converted "green" to a cool color temperature.
+
+✻ Cogitated for 5m 16s · 1 background task still running (↓ to manage)
+
+------------------------------
+
+❯ Alexa discovery is failing. The device still has the connection (fabric)? Does the device need to be 'reset'?                                              
+                                                                                                                                                             
+● Yes — the device has an existing fabric, so BLE commissioning isn't open. Alexa has nothing to discover. You need to clear the Matter fabric from NVS.     
+                                                                                                                                                             
+  Check the partition addresses first:                                                                                                                       
+                                                                                     
+● Read 1 file (ctrl+o to expand)                                                                                                                             
+                                                                                                                                                             
+● Good. The nvs partition holds the CHIP fabric/KVS data. The fctry partition holds the discriminator — we want to keep that. Erase only nvs, then flash the 
+  new firmware:                                                                                                                                              
+                                                                                                                                                             
+  # 1. Erase just the nvs partition (clears Matter fabric, preserves fctry discriminator)                                                                    
+  python -m parttool -p /dev/ttyUSB0 erase_partition --partition-name nvs                                                                                    
+                                                                                                                                                             
+  # 2. Flash new firmware                                                                                                                                    
+  ./build.sh -p /dev/ttyUSB0 flash monitor                                           
+
+  After boot, the device has no fabric so BLE commissioning opens automatically. Then:
+  1. In Alexa → Add Device → Other (or matter device) → scan/enter the code
+  2. The boot log will print the PIN and manual pairing code as before
+
+  If parttool isn't on your PATH, the equivalent esptool command (nvs starts at 0x9000, size 0xC000):
+  python -m esptool -p /dev/ttyUSB0 erase_region 0x9000 0xC000
+
+✻ Brewed for 40s · 1 background task still running (↓ to manage)
+                                                                                          

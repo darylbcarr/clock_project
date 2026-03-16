@@ -1,0 +1,8 @@
+claude --resume 4ef6d2a7-61a3-42ad-91d0-3e7c13a0415b
+
+export IDF_PATH=$HOME/esp/esp-idf
+export ESP_MATTER_PATH=$HOME/esp/esp-matter
+xport ESP_MATTER_DEVICE_PATH=$HOME/esp/esp-matter/device_hal/device/esp32_devkit_c
+source $HOME/esp/esp-idf/export.sh
+source $HOME/esp/esp-matter/export.sh
+

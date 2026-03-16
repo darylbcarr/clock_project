@@ -1,0 +1,233 @@
+Alexa: TEST_VENDOR Device and 2 component devcies found and connected.
+Choose which connected devices to set up first.
+First Device
+First Light
+Second Light
+
+
+entry 0x403c8928
+I (33) boot: ESP-IDF v5.4.1 2nd stage bootloader
+I (33) boot: compile time Mar 15 2026 07:42:47
+I (33) boot: Multicore bootloader
+I (34) boot: chip revision: v0.1
+I (36) boot: efuse block revision: v1.2
+I (40) boot.esp32s3: Boot SPI Speed : 80MHz
+I (44) boot.esp32s3: SPI Mode       : SLOW READ
+I (48) boot.esp32s3: SPI Flash Size : 16MB
+I (52) boot: Enabling RNG early entropy source...
+I (56) boot: Partition Table:
+I (59) boot: ## Label            Usage          Type ST Offset   Length
+I (65) boot:  0 nvs              WiFi data        01 02 00009000 0000c000
+I (72) boot:  1 otadata          OTA data         01 00 00015000 00002000
+I (78) boot:  2 phy_init         RF data          01 01 00017000 00001000
+I (85) boot:  3 fctry            WiFi data        01 02 00018000 00010000
+I (91) boot:  4 ota_0            OTA app          00 10 00030000 00300000
+I (98) boot:  5 ota_1            OTA app          00 11 00330000 00300000
+I (104) boot:  6 storage          Unknown data     01 81 00630000 005e4000
+I (111) boot: End of partition table
+I (114) boot: No factory image, trying OTA 0
+I (118) esp_image: segment 0: paddr=00030020 vaddr=3c180020 size=c1b54h (793428) map
+I (312) esp_image: segment 1: paddr=000f1b7c vaddr=3fc9b100 size=05c70h ( 23664) load
+I (318) esp_image: segment 2: paddr=000f77f4 vaddr=40374000 size=08824h ( 34852) load
+I (328) esp_image: segment 3: paddr=00100020 vaddr=42000020 size=17caech (1559276) map
+I (694) esp_image: segment 4: paddr=0027cb14 vaddr=4037c824 size=0e8bch ( 59580) load
+I (710) esp_image: segment 5: paddr=0028b3d8 vaddr=600fe100 size=0001ch (    28) load
+I (720) boot: Loaded app from partition at offset 0x30000
+I (746) boot: Set actual ota_seq=1 in otadata[0]
+I (746) boot: Disabling RNG early entropy source...
+I (756) cpu_start: Multicore app
+I (765) cpu_start: Pro cpu start user code
+I (765) cpu_start: cpu freq: 160000000 Hz
+I (765) app_init: Application information:
+I (765) app_init: Project name:     clock_project
+I (769) app_init: App version:      4f5cfbd-dirty
+I (774) app_init: Compile time:     Mar 15 2026 07:42:40
+I (779) app_init: ELF file SHA256:  0412e00d8...
+I (783) app_init: ESP-IDF:          v5.4.1
+I (787) efuse_init: Min chip rev:     v0.0
+I (791) efuse_init: Max chip rev:     v0.99 
+I (795) efuse_init: Chip rev:         v0.1
+I (799) heap_init: Initializing. RAM available for dynamic allocation:
+I (805) heap_init: At 3FCB5108 len 00034608 (209 KiB): RAM
+I (810) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (815) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (820) heap_init: At 600FE11C len 00001ECC (7 KiB): RTCRAM
+W (826) spi_flash: Octal flash chip is using but dio mode is selected, will automatically switch to Octal mode
+I (836) spi_flash: detected chip: mxic (opi)
+I (839) spi_flash: flash io: opi_str
+W (843) spi_flash: Detected size(32768k) larger than the size in the binary image header(16384k). Using the size in the binary image header.
+I (856) gpio: GPIO[16]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (876) gpio: GPIO[15]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (876) gpio: GPIO[7]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (882) gpio: GPIO[6]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (890) stepper_motor: Stepper motor initialised (delay=2000 µs)
+I (896) gpio: GPIO[13]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (904) position_sensor: Position sensor initialised
+I (909) clock_manager: ClockManager constructed
+I (914) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (919) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (926) coexist: coex firmware version: e727207
+I (930) coexist: coexist rom version e7ae62f
+I (934) main_task: Started on CPU0
+I (937) main_task: Calling app_main()
+I (940) main: ═══════════════════════════════════════════
+I (953) main:   Analog Clock Driver  — ESP32-S3
+I (957) main: ═══════════════════════════════════════════
+I (1001) config_store: NVS namespace 'clk_cfg' OK
+I (1004) stepper_motor: Step delay set to 2000 µs
+I (1006) clock_manager: cmd_set_sensor_offset: offset=0 s  (saved)
+I (1006) main: WiFi SSID:  (source: default)
+I (1009) main: Initialising display...
+I (1013) DISPLAY: Initializing SSD1306 display
+I (1118) DISPLAY: Clearing display
+I (1215) DISPLAY: Display initialized successfully
+I (1601) main: Settling I2C bus before encoder registration...
+I (1622) main: Bus probe (0x3C): ESP_OK
+I (2122) main: Initialising encoder...
+I (2132) encoder: Seesaw registered  addr=0x36  100000 Hz
+I (2657) encoder: Seesaw HW ID: 0x55 (OK)
+I (2703) encoder: Encoder ready, initial pos=0
+I (2703) main: Encoder ready
+I (2703) main: Initialising LED strips...
+I (2705) LedMgr: Strip GPIO1 ready, 30 px
+I (2708) LedMgr: Strip GPIO2 ready, 30 px
+I (2710) MatterBridge: Initialising Matter node (2 × Extended Color Light)
+I (2726) MatterBridge: Ring endpoint id=1
+I (2732) MatterBridge: Base endpoint id=2
+I (2733) gpio: GPIO[10]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 
+I (2734) gpio: GPIO[11]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 
+I (2742) main: Buttons: A=GPIO10 (prev/long=select), B=GPIO11 (next/long=select), A+B=dismiss
+I (2750) main: Building menu...
+I (2754) Menu: Menu built with 5 top-level items
+W (2757) MatterBridge: fctry NVS open failed (ESP_ERR_NVS_PART_NOT_FOUND) — using default discriminator
+I (2767) MatterBridge: Starting Matter stack
+I (2772) pp: pp rom version: e7ae62f
+I (2774) net80211: net80211 rom version: e7ae62f
+I (2780) wifi:wifi driver task: 3fcc8144, prio:23, stack:6656, core=0
+I (2797) wifi:wifi firmware version: 79fa3f41ba
+I (2798) wifi:wifi certification version: v7.0
+I (2798) wifi:config NVS flash: enabled
+I (2798) wifi:config nano formatting: disabled
+I (2803) wifi:Init data frame dynamic rx buffer num: 32
+I (2808) wifi:Init static rx mgmt buffer num: 5
+I (2812) wifi:Init management short buffer num: 32
+I (2816) wifi:Init dynamic tx buffer num: 32
+I (2820) wifi:Init static tx FG buffer num: 2
+I (2825) wifi:Init static rx buffer size: 1600
+I (2829) wifi:Init static rx buffer num: 10
+I (2832) wifi:Init dynamic rx buffer num: 32
+I (2837) wifi_init: rx ba win: 6
+I (2839) wifi_init: accept mbox: 6
+I (2843) wifi_init: tcpip mbox: 32
+I (2846) wifi_init: udp mbox: 6
+I (2849) wifi_init: tcp mbox: 6
+I (2851) wifi_init: tcp tx win: 5760
+I (2855) wifi_init: tcp rx win: 5760
+I (2858) wifi_init: tcp mss: 1440
+I (2872) chip[DL]: NVS set: chip-counters/reboot-count = 471 (0x1D7)
+I (2874) chip[DL]: Real time clock set to 946684800 (2000-01-01 00:00:00 UTC)
+I (2875) BLE_INIT: BT controller compile version [d74042a]
+I (2880) BLE_INIT: Bluetooth MAC: 34:85:18:a4:bb:96
+I (2885) phy_init: phy_version 700,8582a7fd,Feb 10 2025,20:13:11
+I (2929) NimBLE: GAP procedure initiated: stop advertising.
+
+I (2930) CHIP[DL]: BLE host-controller synced
+I (3431) chip[DL]: Starting ESP WiFi layer
+I (3432) wifi:mode : sta (34:85:18:a4:bb:94)
+I (3433) wifi:enable tsf
+I (3433) chip[DL]: Posting ESPSystemEvent: Wifi Event with eventId : 43
+W (3433) wifi:Haven't to connect to a suitable AP now!
+I (3441) chip[DL]: Done driving station state, nothing else to do...
+I (3442) chip[DL]: Posting ESPSystemEvent: Wifi Event with eventId : 2
+W (3448) wifi:Haven't to connect to a suitable AP now!
+I (3459) chip[DL]: Done driving station state, nothing else to do...
+I (3465) chip[SVR]: Initializing subscription resumption storage...
+I (3472) chip[SVR]: Server initializing...
+I (3475) chip[TS]: Last Known Good Time: 2026-03-15T12:42:31
+I (3480) chip[TS]: Setting Last Known Good Time to firmware build time 2026-03-15T14:19:41
+I (3496) chip[DMG]: AccessControl: initializing
+I (3497) chip[DMG]: Examples::AccessControlDelegate::Init
+I (3497) chip[DMG]: AccessControl: setting
+I (3501) chip[DMG]: DefaultAclStorage: initializing
+I (3505) chip[DMG]: DefaultAclStorage: 0 entries loaded
+I (3510) chip[SVR]: WARNING: mTestEventTriggerDelegate is null
+I (3545) chip[ZCL]: Using ZAP configuration...
+I (3546) esp_matter_cluster: Cluster plugin init common callback
+I (3546) chip[DMG]: AccessControlCluster: initializing
+I (3549) chip[ZCL]: WRITE ERR: ep 0 clus 0x0000_0030 attr 0x0000_0000 not supported
+I (3559) chip[DIS]: Updating services using commissioning mode 1
+I (3563) chip[DIS]: CHIP minimal mDNS started advertising.
+I (3568) chip[DIS]: Advertise commission parameter vendorID=65521 productID=32768 discriminator=3840/15 cm=1 cp=0
+I (3578) chip[DIS]: CHIP minimal mDNS configured as 'Commissionable node device'; instance name: D30845B2C9C83F8E.
+I (3588) chip[DIS]: mDNS service published: _matterc._udp
+I (3593) chip[IN]: CASE Server enabling CASE session setups
+I (3599) chip[SVR]: Joining Multicast groups
+I (3602) chip[SVR]: Server Listening...
+I (3607) esp_matter_attribute: ********** R : Endpoint 0x0000's Cluster 0x0000003C's Attribute 0x0000FFFC is 0 **********
+I (3617) data_model: Dynamic endpoint 0 added
+E (3620) data_model: Cluster cannot be NULL.
+I (3625) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000003's Attribute 0x00000001 is 1 **********
+I (3635) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000004's Attribute 0x00000000 is 128 **********
+I (3646) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000004's Attribute 0x0000FFFC is 1 **********
+I (3657) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000006's Attribute 0x0000FFFC is 1 **********
+I (3667) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000006's Attribute 0x00004003 is 0 **********
+I (3678) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000006's Attribute 0x00000000 is 0 **********
+I (3689) chip[ZCL]: Boot reason: 1
+I (3692) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000006's Attribute 0x00000000 is 0 **********
+I (3703) chip[ZCL]: Endpoint 1 On/off already set to new value
+I (3708) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x00000002 is 1 **********
+I (3719) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x00000003 is 254 **********
+I (3730) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x0000FFFC is 3 **********
+I (3740) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x00000000 is 128 **********
+I (3751) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x00004000 is 128 **********
+I (3762) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000008's Attribute 0x00000000 is 128 **********
+I (3773) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x00004010 is 250 **********
+I (3784) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x0000400B is 1 **********
+I (3794) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x0000400C is 65279 **********
+I (3806) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x00000007 is 250 **********
+I (3816) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x00000008 is 2 **********
+I (3827) esp_matter_attribute: ********** R : Endpoint 0x0001's Cluster 0x00000300's Attribute 0x00004001 is 2 **********
+I (3838) data_model: Dynamic endpoint 1 added
+E (3842) data_model: Cluster cannot be NULL.
+I (3846) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000003's Attribute 0x00000001 is 1 **********
+I (3856) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000004's Attribute 0x00000000 is 128 **********
+I (3867) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000004's Attribute 0x0000FFFC is 1 **********
+I (3878) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000006's Attribute 0x0000FFFC is 1 **********
+I (3889) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000006's Attribute 0x00004003 is 0 **********
+I (3899) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000006's Attribute 0x00000000 is 0 **********
+I (3910) chip[ZCL]: Boot reason: 1
+I (3913) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000006's Attribute 0x00000000 is 0 **********
+I (3924) chip[ZCL]: Endpoint 2 On/off already set to new value
+I (3929) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x00000002 is 1 **********
+I (3940) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x00000003 is 254 **********
+I (3951) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x0000FFFC is 3 **********
+I (3961) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x00000000 is 128 **********
+I (3972) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x00004000 is 128 **********
+I (3983) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000008's Attribute 0x00000000 is 128 **********
+I (3994) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x00004010 is 250 **********
+I (4005) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x0000400B is 1 **********
+I (4016) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x0000400C is 65279 **********
+I (4027) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x00000007 is 250 **********
+I (4037) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x00000008 is 2 **********
+I (4048) esp_matter_attribute: ********** R : Endpoint 0x0002's Cluster 0x00000300's Attribute 0x00004001 is 2 **********
+I (4059) data_model: Dynamic endpoint 2 added
+E (4063) data_model: Cluster cannot be NULL.
+I (4068) chip[DL]: WIFI_EVENT_STA_START
+W (4071) wifi:Haven't to connect to a suitable AP now!
+I (4075) chip[DL]: Done driving station state, nothing else to do...
+I (4082) chip[DL]: Configuring CHIPoBLE advertising (interval 25 ms, connectable)
+I (4089) NimBLE: GAP procedure initiated: advertise; 
+I (4093) NimBLE: disc_mode=2
+I (4096) NimBLE:  adv_channel_map=0 own_addr_type=1 adv_filter_policy=0 adv_itvl_min=40 adv_itvl_max=40
+I (4105) NimBLE: 
+
+I (4107) chip[DL]: CHIPoBLE advertising started
+I (33559) chip[DL]: bleAdv Timeout : Start slow advertisement
+I (33560) chip[DL]: Configuring CHIPoBLE advertising (interval 500 ms, connectable)
+I (33561) chip[DL]: Device already advertising, stop active advertisement and restart
+I (33568) NimBLE: GAP procedure initiated: stop advertising.
+
+I (33574) NimBLE: GAP procedure initiated: advertise; 
+I (33579) NimBLE: disc_mode=2
+I (33581) NimBLE:  adv_channel_map=0 own_addr_type=1 adv_filter_policy=0 adv_itvl_min=800 adv_itvl_max=800
+I (33591) NimBLE: 
