@@ -240,7 +240,7 @@ esp_err_t MatterBridge::start()
     if (!manualCode.empty())
         ESP_LOGI(TAG, "║ Code:  %-22s ║", manualCode.c_str());
     if (!qrCode.empty())
-        ESP_LOGI(TAG, "║ QR:    MT:%-19s ║", qrCode.c_str());
+        ESP_LOGI(TAG, "║ QR:    %-22s ║", qrCode.c_str());
     ESP_LOGI(TAG, "╚══════════════════════════════╝");
 
     return err;
