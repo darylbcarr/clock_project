@@ -218,6 +218,10 @@ esp_err_t MatterBridge::start()
     payload.commissioningFlow = chip::CommissioningFlow::kStandard;
     payload.setUpPINCode      = info.pin_code;
     payload.discriminator.SetLongValue(info.discriminator);
+    // kBLE: device is commissioned via BLE on first pairing.
+    // Without this, QRCodeSetupPayloadGenerator returns an empty string.
+    payload.rendezvousInformation.SetValue(
+        chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
 
     std::string manualCode;
     std::string qrCode;

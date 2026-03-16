@@ -274,7 +274,7 @@ function buildMatterPayload(discriminator, pin) {
     { val: 0n,                    bits: 16 },  // vendorId
     { val: 0n,                    bits: 16 },  // productId
     { val: 0n,                    bits: 2  },  // commissionFlow
-    { val: 6n,                    bits: 8  },  // rendezvous: BLE | OnNetwork
+    { val: 2n,                    bits: 8  },  // rendezvous: kBLE (0x02) — initial commissioning
     { val: BigInt(discriminator), bits: 12 },
     { val: BigInt(pin),           bits: 27 },
     { val: 0n,                    bits: 4  },  // padding
