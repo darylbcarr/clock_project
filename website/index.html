@@ -247,21 +247,24 @@
 <div class="card" id="output">
   <h2 id="out-device-label">Pairing QR Code</h2>
 
-  <div class="qr-wrap">
-    <div id="qrcode"></div>
-  </div>
-
-  <button class="btn-secondary" onclick="downloadQR()">Download QR as PNG</button>
-
-  <div class="mt-string">
-    <div class="lbl">Raw QR string (copy into any QR generator)</div>
-    <code id="out-qr-str">—</code>
-  </div>
-
-  <div class="manual-code" style="margin-top:0.75rem">
-    <div class="label">Manual pairing code — type this into Alexa if QR scan fails</div>
+  <div class="manual-code" style="margin-bottom:1rem">
+    <div class="label">Manual pairing code — use this with Alexa</div>
     <div class="code" id="out-manual">—</div>
   </div>
+
+  <details style="margin-bottom:0.75rem">
+    <summary style="font-size:0.8rem;color:#64748b;cursor:pointer;user-select:none">
+      QR code (HomeKit / Google Home — not supported by Alexa for dev devices)
+    </summary>
+    <div style="margin-top:0.75rem">
+      <div class="qr-wrap"><div id="qrcode"></div></div>
+      <button class="btn-secondary" onclick="downloadQR()">Download QR as PNG</button>
+      <div class="mt-string" style="margin-top:0.75rem">
+        <div class="lbl">Raw QR string</div>
+        <code id="out-qr-str">—</code>
+      </div>
+    </div>
+  </details>
 
   <div class="info-grid">
     <div class="info-item">
@@ -286,12 +289,11 @@
         <strong><code>matter-pair</code></strong> at the <code>clock&gt;</code> UART prompt
         <em>before</em> opening Alexa — the console is unresponsive once Alexa's
         PASE handshake begins.</li>
-    <li>In Alexa → <strong>Add Device → Matter</strong>:
-        <ul style="margin-top:0.3rem;padding-left:1.2rem">
-          <li>Scan the QR — hold phone 20–30 cm from screen, avoid glare.</li>
-          <li>If QR scan fails, tap <strong>Setup without QR code</strong> and
-              enter the 11-digit manual code instead.</li>
-        </ul>
+    <li>In Alexa → <strong>Add Device → Matter → Setup without QR code</strong>
+        and enter the 11-digit manual code.
+        <br><em style="font-size:0.8rem;color:#64748b">Alexa validates QR codes
+        against the Matter DCL; unregistered dev devices (VID=0) are silently
+        rejected. The manual code bypasses this check.</em>
     </li>
     <li>If re-pairing after a firmware update, erase the device NVS first:<br>
         <code>python -m parttool -p /dev/ttyUSB0 erase_partition --partition-name nvs</code></li>
