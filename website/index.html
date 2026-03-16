@@ -99,11 +99,47 @@
     }
     #qrcode {
       background: #fff;
-      padding: 16px;
+      padding: 24px;
       border-radius: 12px;
       display: inline-block;
     }
     #qrcode canvas, #qrcode img { display: block; }
+
+    .btn-secondary {
+      width: 100%;
+      padding: 0.6rem;
+      background: transparent;
+      color: #6366f1;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border: 1px solid #6366f1;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      margin-top: 0.75rem;
+    }
+    .btn-secondary:hover { background: #6366f1; color: #fff; }
+
+    .mt-string {
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin-top: 0.75rem;
+      word-break: break-all;
+    }
+    .mt-string .lbl {
+      font-size: 0.7rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.3rem;
+    }
+    .mt-string code {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.85rem;
+      color: #a5b4fc;
+    }
 
     .manual-code {
       background: #0f1117;
@@ -215,8 +251,15 @@
     <div id="qrcode"></div>
   </div>
 
-  <div class="manual-code">
-    <div class="label">Manual pairing code</div>
+  <button class="btn-secondary" onclick="downloadQR()">Download QR as PNG</button>
+
+  <div class="mt-string">
+    <div class="lbl">Raw QR string (copy into any QR generator)</div>
+    <code id="out-qr-str">—</code>
+  </div>
+
+  <div class="manual-code" style="margin-top:0.75rem">
+    <div class="label">Manual pairing code — type this into Alexa if QR scan fails</div>
     <div class="code" id="out-manual">—</div>
   </div>
 
@@ -239,8 +282,17 @@
     <li>Find the discriminator in the device serial output:<br>
         <strong><code>discriminator=XXXX/01 cm=1</code></strong></li>
     <li>Enter the discriminator above and click <strong>Generate</strong>.</li>
-    <li>In your smart home app (Alexa, HomeKit, Google Home), choose <strong>Add Device</strong>
-        and scan the QR code — or enter the 11-digit manual code.</li>
+    <li>If BLE fast advertising has timed out (&gt;30 s since boot), type
+        <strong><code>matter-pair</code></strong> at the <code>clock&gt;</code> UART prompt
+        <em>before</em> opening Alexa — the console is unresponsive once Alexa's
+        PASE handshake begins.</li>
+    <li>In Alexa → <strong>Add Device → Matter</strong>:
+        <ul style="margin-top:0.3rem;padding-left:1.2rem">
+          <li>Scan the QR — hold phone 20–30 cm from screen, avoid glare.</li>
+          <li>If QR scan fails, tap <strong>Setup without QR code</strong> and
+              enter the 11-digit manual code instead.</li>
+        </ul>
+    </li>
     <li>If re-pairing after a firmware update, erase the device NVS first:<br>
         <code>python -m parttool -p /dev/ttyUSB0 erase_partition --partition-name nvs</code></li>
   </ol>
@@ -421,26 +473,45 @@ function generate() {
   const qrStr     = matterQRString(disc, pin);
   const manualStr = matterManualCode(disc, pin);
 
-  // Render QR code
+  // Render QR code — 300 px with high error correction for reliable scanning
   const container = document.getElementById('qrcode');
   container.innerHTML = '';
   qrInstance = new QRCode(container, {
     text: qrStr,
-    width: 220, height: 220,
+    width: 300, height: 300,
     colorDark: '#000000',
     colorLight: '#ffffff',
-    correctLevel: QRCode.CorrectLevel.M,
+    correctLevel: QRCode.CorrectLevel.Q,
   });
 
   // Fill info
-  document.getElementById('out-manual').textContent = manualStr;
-  document.getElementById('out-disc').textContent   = disc;
-  document.getElementById('out-pin').textContent    = pin;
+  document.getElementById('out-qr-str').textContent = qrStr;
+  document.getElementById('out-manual').textContent  = manualStr;
+  document.getElementById('out-disc').textContent    = disc;
+  document.getElementById('out-pin').textContent     = pin;
   document.getElementById('out-device-label').textContent =
     name ? `Pairing QR Code — ${name}` : 'Pairing QR Code';
 
   document.getElementById('output').style.display = 'block';
   document.getElementById('output').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function downloadQR() {
+  const canvas = document.querySelector('#qrcode canvas');
+  if (!canvas) return;
+  // Add white margin around the canvas before downloading
+  const margin = 24;
+  const out = document.createElement('canvas');
+  out.width  = canvas.width  + margin * 2;
+  out.height = canvas.height + margin * 2;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, margin, margin);
+  const a = document.createElement('a');
+  a.download = 'matter-pairing-qr.png';
+  a.href = out.toDataURL('image/png');
+  a.click();
 }
 
 // Pre-fill from URL params: ?disc=508&pin=20202021&name=Living+Room
