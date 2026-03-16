@@ -38,3 +38,44 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
 
 # WebSocket support for the HTTP server
 CONFIG_HTTPD_WS_SUPPORT=y
+
+# ── IRAM reduction ───────────────────────────────────────────────────────────
+# Matter + BLE pushes IRAM over the segment limit.  Moving WiFi ISR code and
+# heap functions to flash recovers ~20+ KB IRAM with negligible impact on a
+# low-throughput IoT device.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y
+
+# ── mbedTLS extras required by Matter ────────────────────────────────────────
+# HKDF is used by CHIP crypto (CHIPCryptoPALmbedTLS) but disabled by default.
+CONFIG_MBEDTLS_HKDF_C=y
+
+# ── Matter / CHIP ─────────────────────────────────────────────────────────────
+# Bluetooth for BLE commissioning (first-time pairing via Home app)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# Matter data model
+CONFIG_ESP_MATTER_ENABLE_DATA_MODEL=y
+
+# Do NOT let Matter manage WiFi — this project's Networking component does it.
+# Matter will use the existing WiFi connection for Matter-over-IP.
+CONFIG_CHIP_ENABLE_WIFI_STATION=n
+
+# Read PIN and discriminator from NVS ("fctry" partition, "chip-factory" namespace)
+# instead of using the compile-time test constants (20202021 / 3840).
+# This allows each device to advertise a unique discriminator derived from its
+# MAC address, so multiple devices in the same home get distinct pairing codes.
+# Requires that ensure_unique_discriminator() writes the keys before matter::start().
+CONFIG_ENABLE_TEST_SETUP_PARAMS=y
+# Point CHIP's factory namespace at the dedicated "fctry" NVS partition (not "nvs").
+# ensure_unique_discriminator() writes chip-factory/discriminator there on first boot.
+CONFIG_CHIP_FACTORY_NAMESPACE_PARTITION_LABEL="fctry"
+
+# Disable Matter shell (saves flash; use UART console instead)
+CONFIG_ENABLE_CHIP_SHELL=n
+
+# Use test/development attestation credentials (no factory data flashing needed
+# for development). Set to y and flash factory data for production devices.
+CONFIG_CHIP_FACTORY_DATA=n

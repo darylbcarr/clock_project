@@ -12,6 +12,7 @@ idf_component_register(
         encoder
         menu
         led
+        matter
         webserver
         config_store
         driver

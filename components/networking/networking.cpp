@@ -66,16 +66,34 @@ void Networking::begin()
 
     // NVS is initialised by main.cpp before begin() is called.
 
-    // 1. TCP/IP stack + event loop
+    // 1. TCP/IP stack
+    // esp_netif_init() is idempotent in ESP-IDF 5.x.
     ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // 2. Default event loop
+    // ESP_ERR_INVALID_STATE = already created by esp_matter::start() — use it.
+    {
+        esp_err_t e = esp_event_loop_create_default();
+        if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(e);
+    }
 
     // 3. Default STA netif
-    netif_ = esp_netif_create_default_wifi_sta();
+    // esp_matter::start() creates "WIFI_STA_DEF" before we reach here; reuse it.
+    netif_ = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!netif_) {
+        netif_ = esp_netif_create_default_wifi_sta();
+    }
 
     // 4. WiFi driver
-    wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
+    // Skip silently if Matter already called esp_wifi_init().
+    {
+        wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
+        esp_err_t e = esp_wifi_init(&wifi_cfg);
+        if (e != ESP_OK) {
+            ESP_LOGW(TAG, "esp_wifi_init: %s (already initialised by Matter)",
+                     esp_err_to_name(e));
+        }
+    }
 
     // 5. Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
@@ -85,17 +103,40 @@ void Networking::begin()
         IP_EVENT, IP_EVENT_STA_GOT_IP,
         s_ip_event_handler, this, nullptr));
 
-    // 6. Configure WiFi
-    wifi_config_t cfg = {};
-    strncpy((char*)cfg.sta.ssid,     ssid_,     sizeof(cfg.sta.ssid)     - 1);
-    strncpy((char*)cfg.sta.password, password_, sizeof(cfg.sta.password) - 1);
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    cfg.sta.pmf_cfg.capable    = true;
-    cfg.sta.pmf_cfg.required   = false;
+    // 6. Configure WiFi and connect — only when credentials are available.
+    //    If SSID is empty, Matter manages WiFi; we skip connect but still
+    //    watch for the IP event so SNTP can start when Matter gets an address.
+    if (ssid_[0] != '\0') {
+        wifi_config_t cfg = {};
+        strncpy((char*)cfg.sta.ssid,     ssid_,     sizeof(cfg.sta.ssid)     - 1);
+        strncpy((char*)cfg.sta.password, password_, sizeof(cfg.sta.password) - 1);
+        cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        cfg.sta.pmf_cfg.capable    = true;
+        cfg.sta.pmf_cfg.required   = false;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+
+        // If Matter already started WiFi, WIFI_EVENT_STA_START won't fire
+        // again — call connect() directly in that case.
+        esp_err_t e = esp_wifi_start();
+        if (e != ESP_OK) {
+            ESP_LOGW(TAG, "esp_wifi_start: %s (already started by Matter) — connecting directly",
+                     esp_err_to_name(e));
+            esp_wifi_connect();
+        }
+        // On ESP_OK, WIFI_EVENT_STA_START fires → s_wifi_event_handler → connect()
+    } else {
+        ESP_LOGI(TAG, "No SSID configured — Matter manages WiFi");
+        // If Matter already obtained an IP before we registered our event handler,
+        // bootstrap SNTP now instead of waiting for an event that already fired.
+        esp_netif_ip_info_t ip_info = {};
+        if (netif_ && esp_netif_get_ip_info(netif_, &ip_info) == ESP_OK &&
+            ip_info.ip.addr != 0) {
+            ESP_LOGI(TAG, "Matter already has IP — bootstrapping SNTP");
+            on_got_ip(&ip_info);
+        }
+    }
 
     // 7. SNTP mode (safe now; stack is up — just configure, don't init yet)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
@@ -120,7 +161,9 @@ void Networking::s_wifi_event_handler(void* arg, esp_event_base_t /*base*/,
     Networking* self = static_cast<Networking*>(arg);
 
     if (id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (self->ssid_[0] != '\0') {
+            esp_wifi_connect();
+        }
     } else if (id == WIFI_EVENT_STA_CONNECTED) {
         self->retry_count_ = 0;
         wifi_ap_record_t ap = {};

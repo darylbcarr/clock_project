@@ -35,12 +35,14 @@
 #include "clock_manager.h"
 #include "networking.h"
 #include "led_manager.h"
+#include "config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 static const char* TAG = "Menu";
 
@@ -336,6 +338,295 @@ void Menu::show_info_screen(ClockManager& cm, Networking& net) {
     render();
 }
 
+// ── show_text_input ───────────────────────────────────────────────────────────
+
+// Flat character palette — encoder scrolls through the whole list.
+// Ordered: space · a-z · A-Z · 0-9 · symbols
+static const char  CHARSET[]     = " abcdefghijklmnopqrstuvwxyz"
+                                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                    "0123456789"
+                                    "!@#$%^&*()-_=+[]{}|;:'\",.<>/?~`";
+static constexpr int CHARSET_LEN = (int)(sizeof(CHARSET) - 1);
+
+// First index of each group — used by Button A to jump between groups.
+static constexpr int CHARSET_GROUPS[]    = { 0, 1, 27, 53, 63 };
+static constexpr int CHARSET_GROUP_COUNT = 5;
+
+std::string Menu::show_text_input(const std::string& title, bool mask, size_t max_len)
+{
+    if (!input_poll_fn_) return {};
+
+    std::string result;
+    int  char_idx     = 1;    // start at 'a'
+    bool enc_btn_last = false;
+    bool btnA_last    = false;
+    bool btnB_last    = false;
+    bool both_last    = false;
+    uint32_t enc_hold_ms  = 0;
+    bool     enc_longfire = false;
+
+    auto render_input = [&]() {
+        char buf[20];
+        display_.clear();
+
+        // Row 0: title ("SSID:" / "Password:")
+        display_.print(0, title.c_str());
+
+        // Row 1: entered text + cursor (show last 15 chars, mask passwords)
+        std::string visible = mask ? std::string(result.size(), '*') : result;
+        visible += '_';
+        if (visible.size() > 15) visible = visible.substr(visible.size() - 15);
+        display_.print(1, visible.c_str());
+
+        // Row 3: character neighbourhood  prev [cur] next
+        char prev_c = CHARSET[(char_idx - 1 + CHARSET_LEN) % CHARSET_LEN];
+        char cur_c  = CHARSET[char_idx];
+        char next_c = CHARSET[(char_idx + 1) % CHARSET_LEN];
+        snprintf(buf, sizeof(buf), "  %c [%c] %c",
+                 (prev_c == ' ') ? '<' : prev_c,
+                 (cur_c  == ' ') ? '_' : cur_c,
+                 (next_c == ' ') ? '>' : next_c);
+        display_.print(3, buf);
+
+        // Row 4: current group indicator
+        const char* grp;
+        if      (char_idx == 0)                      grp = "  [space]";
+        else if (char_idx >= 1  && char_idx <= 26)   grp = "  [a-z]";
+        else if (char_idx >= 27 && char_idx <= 52)   grp = "  [A-Z]";
+        else if (char_idx >= 53 && char_idx <= 62)   grp = "  [0-9]";
+        else                                          grp = "  [!@#]";
+        display_.print(4, grp);
+
+        // Row 6-7: control reminder
+        display_.print(6, "Pr:add  LP:del");
+        display_.print(7, "A:grp  A+B:ok");
+    };
+
+    // Brief instructions before entering the loop
+    display_.clear();
+    display_.print(0, title.c_str());
+    display_.print(2, "Rot:char  Pr:add");
+    display_.print(3, "LP:del    B:spc");
+    display_.print(4, "A:grp  A+B:done");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    render_input();
+
+    while (true) {
+        InputEvent ev = input_poll_fn_();
+        bool enc_btn = ev.enc_btn;
+        bool btnA    = ev.btnA;
+        bool btnB    = ev.btnB;
+        bool both    = btnA && btnB;
+
+        bool enc_rise  = !enc_btn && enc_btn_last;
+        bool btnA_rise = !btnA && btnA_last && !both_last;
+        bool btnB_rise = !btnB && btnB_last && !both_last;
+        bool both_fall = both && !both_last;
+
+        // Both GPIO buttons → confirm and exit
+        if (both_fall) break;
+
+        // Encoder rotation → scroll through character palette
+        if (ev.delta != 0) {
+            char_idx = ((char_idx + (int)ev.delta) % CHARSET_LEN + CHARSET_LEN) % CHARSET_LEN;
+            render_input();
+        }
+
+        // Encoder button: held → backspace (long press), released → add char (short press)
+        if (enc_btn) {
+            if (!enc_longfire) {
+                enc_hold_ms += 50;
+                if (enc_hold_ms >= 800) {
+                    enc_longfire = true;
+                    if (!result.empty()) { result.pop_back(); render_input(); }
+                }
+            }
+        } else {
+            if (enc_rise && !enc_longfire) {
+                if (result.size() < max_len) { result += CHARSET[char_idx]; render_input(); }
+            }
+            enc_hold_ms  = 0;
+            enc_longfire = false;
+        }
+
+        // Button A release → jump to next character group
+        if (btnA_rise) {
+            int cur_grp = 0;
+            for (int g = CHARSET_GROUP_COUNT - 1; g >= 0; g--) {
+                if (char_idx >= CHARSET_GROUPS[g]) { cur_grp = g; break; }
+            }
+            char_idx = CHARSET_GROUPS[(cur_grp + 1) % CHARSET_GROUP_COUNT];
+            render_input();
+        }
+
+        // Button B release → add space shortcut
+        if (btnB_rise) {
+            if (result.size() < max_len) { result += ' '; render_input(); }
+        }
+
+        enc_btn_last = enc_btn;
+        btnA_last    = btnA;
+        btnB_last    = btnB;
+        both_last    = both;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    return result;
+}
+
+// ── set_matter_pairing_info ───────────────────────────────────────────────────
+
+void Menu::set_matter_pairing_info(uint32_t pin, uint16_t disc,
+                                   const std::string& code)
+{
+    matter_pin_  = pin;
+    matter_disc_ = disc;
+    matter_code_ = code;
+}
+
+// ── show_matter_pairing_screen ────────────────────────────────────────────────
+// Shared between the menu item and first_time_setup; blocks until A+B held.
+
+static void show_matter_pairing_screen(Display& display,
+                                       uint32_t pin, uint16_t disc,
+                                       const std::string& code,
+                                       Menu::InputPollFn poll)
+{
+    char buf[20];
+    display.clear();
+    display.print(0, "  Matter Pairing");
+    display.print(1, "Open Home/Alexa");
+    display.print(2, "app, enter code:");
+    snprintf(buf, sizeof(buf), " %s", code.empty() ? "see UART" : code.c_str());
+    display.print(3, buf);
+    display.print(4, "──────────────");
+    snprintf(buf, sizeof(buf), " PIN: %lu", (unsigned long)pin);
+    display.print(5, buf);
+    snprintf(buf, sizeof(buf), " Disc: %u", (unsigned)disc);
+    display.print(6, buf);
+    display.print(7, "A+B when done");
+
+    if (!poll) return;
+
+    // Wait for A+B hold (~500ms) to dismiss — no timeout for commissioning
+    vTaskDelay(pdMS_TO_TICKS(500));   // debounce after selection
+    while (true) {
+        auto ev = poll();
+        if (ev.btnA && ev.btnB) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ev = poll();
+            if (ev.btnA && ev.btnB) break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+// ── first_time_setup ──────────────────────────────────────────────────────────
+
+bool Menu::first_time_setup()
+{
+    if (!input_poll_fn_) return false;
+
+    // ── 2-item choice screen ──────────────────────────────────────────────────
+    int  choice        = 0;   // 0 = Matter, 1 = Setup WiFi
+    bool enc_btn_last  = false;
+    bool btnA_last     = false;
+    bool btnB_last     = false;
+    bool both_last     = false;
+    uint32_t enc_hold  = 0;
+    bool enc_longfire  = false;
+    uint32_t btnA_hold = 0;
+    bool btnA_longfire = false;
+    uint32_t btnB_hold = 0;
+    bool btnB_longfire = false;
+
+    auto render_choice = [&]() {
+        display_.clear();
+        display_.print(0, "  First-Time Setup");
+        display_.print(2, choice == 0 ? "> Matter"     : "  Matter");
+        display_.print(3, choice == 1 ? "> Setup WiFi" : "  Setup WiFi");
+        display_.print(5, "Rot/A/B: pick");
+        display_.print(6, "Enc/LongAB: ok");
+    };
+    render_choice();
+
+    bool selected = false;
+    while (!selected) {
+        InputEvent ev  = input_poll_fn_();
+        bool enc_btn   = ev.enc_btn;
+        bool btnA      = ev.btnA;
+        bool btnB      = ev.btnB;
+        bool both      = btnA && btnB;
+
+        bool enc_rise  = !enc_btn && enc_btn_last;
+        bool btnA_rise = !btnA   && btnA_last && !both_last;
+        bool btnB_rise = !btnB   && btnB_last && !both_last;
+
+        // Rotation or short A/B → toggle selection
+        if (ev.delta != 0) { choice = (choice + 1) % 2; render_choice(); }
+        if (btnA_rise && !btnA_longfire) { choice = (choice + 1) % 2; render_choice(); }
+        if (btnB_rise && !btnB_longfire) { choice = (choice + 1) % 2; render_choice(); }
+
+        // Encoder short press → confirm
+        if (enc_rise && !enc_longfire) selected = true;
+
+        // Encoder long press → confirm
+        if (enc_btn) {
+            if (!enc_longfire && (enc_hold += 50) >= 800) {
+                enc_longfire = true;  selected = true;
+            }
+        } else { enc_hold = 0;  enc_longfire = false; }
+
+        // Long press A or B → confirm
+        if (btnA && !both) {
+            if (!btnA_longfire && (btnA_hold += 50) >= 800) {
+                btnA_longfire = true;  selected = true;
+            }
+        } else { btnA_hold = 0;  btnA_longfire = false; }
+
+        if (btnB && !both) {
+            if (!btnB_longfire && (btnB_hold += 50) >= 800) {
+                btnB_longfire = true;  selected = true;
+            }
+        } else { btnB_hold = 0;  btnB_longfire = false; }
+
+        enc_btn_last = enc_btn;
+        btnA_last    = btnA;
+        btnB_last    = btnB;
+        both_last    = both;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    if (choice == 0) {
+        // ── Matter path: show commissioning info, wait for A+B ────────────────
+        show_matter_pairing_screen(display_, matter_pin_, matter_disc_,
+                                   matter_code_, input_poll_fn_);
+        return false;
+
+    } else {
+        // ── WiFi path: SSID + password text entry ─────────────────────────────
+        std::string ssid = show_text_input("SSID:", false, 63);
+        if (ssid.empty()) return false;
+
+        std::string pass = show_text_input("Password:", true, 63);
+
+        NetCfg cfg = {};
+        ConfigStore::load(cfg);
+        strncpy(cfg.ssid,     ssid.c_str(), sizeof(cfg.ssid)     - 1);
+        strncpy(cfg.password, pass.c_str(), sizeof(cfg.password) - 1);
+        cfg.ssid[sizeof(cfg.ssid) - 1]         = '\0';
+        cfg.password[sizeof(cfg.password) - 1] = '\0';
+        ConfigStore::save(cfg);
+
+        display_.clear();
+        display_.print(0, "  WiFi Saved!");
+        display_.print(2, ssid.c_str());
+        display_.print(4, "Connecting...");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        return true;
+    }
+}
+
 // ── Async action dispatch ─────────────────────────────────────────────────────
 // Slow motor callbacks (Set Time, Advance) are posted here so they run on
 // action_task and encoder_task stays responsive during motor movement.
@@ -433,6 +724,39 @@ void Menu::build(ClockManager& cm, Networking& net, LedManager& leds) {
 
     netm->addChild(std::make_unique<MenuItem>("Sync Status", [this, &cm]() {
         show_time_screen(cm);
+    }));
+
+    netm->addChild(std::make_unique<MenuItem>("Set WiFi", [this]() {
+        // Enter SSID
+        std::string ssid = show_text_input("SSID:", false, 63);
+        if (ssid.empty()) { render(); return; }
+
+        // Enter password
+        std::string pass = show_text_input("Password:", true, 63);
+
+        // Load existing config to preserve tz_override, then overwrite credentials
+        NetCfg cfg;
+        ConfigStore::load(cfg);
+        strncpy(cfg.ssid,     ssid.c_str(), sizeof(cfg.ssid)     - 1);
+        strncpy(cfg.password, pass.c_str(), sizeof(cfg.password)  - 1);
+        cfg.ssid[sizeof(cfg.ssid) - 1]         = '\0';
+        cfg.password[sizeof(cfg.password) - 1] = '\0';
+        ConfigStore::save(cfg);
+
+        // Confirmation screen
+        display_.clear();
+        display_.print(0, "  WiFi Saved!");
+        display_.print(2, ssid.c_str());
+        display_.print(4, "Restart device");
+        display_.print(5, "to connect.");
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        render();
+    }));
+
+    netm->addChild(std::make_unique<MenuItem>("Matter Pair", [this]() {
+        show_matter_pairing_screen(display_, matter_pin_, matter_disc_,
+                                   matter_code_, input_poll_fn_);
+        render();
     }));
 
     // ── Lights ────────────────────────────────────────────────────────────────

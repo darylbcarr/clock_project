@@ -52,6 +52,18 @@ public:
      */
     using DismissFn = std::function<bool()>;
 
+    /**
+     * Raw hardware state snapshot polled during blocking screens
+     * (text input, info screens with encoder interaction).
+     */
+    struct InputEvent {
+        int8_t delta   = 0;      ///< Encoder rotation since last poll (+CW, -CCW)
+        bool   enc_btn = false;  ///< Encoder button held
+        bool   btnA    = false;  ///< GPIO button A held
+        bool   btnB    = false;  ///< GPIO button B held
+    };
+    using InputPollFn = std::function<InputEvent()>;
+
     explicit Menu(Display& display);
     ~Menu() = default;
 
@@ -64,7 +76,15 @@ public:
      *        The function should return true exactly once per button press
      *        (edge-detected, not level).
      */
-    void set_dismiss_fn(DismissFn fn) { dismiss_fn_ = fn; }
+    void set_dismiss_fn(DismissFn fn)  { dismiss_fn_     = fn; }
+
+    /**
+     * @brief Inject the hardware-poll function used by text-input screens.
+     *        Call once from main before build().
+     *        The function should read encoder delta + button states and return
+     *        them without any debouncing — Menu handles edge detection internally.
+     */
+    void set_input_fn(InputPollFn fn)  { input_poll_fn_  = fn; }
 
     // ── Navigation ────────────────────────────────────────────────────────────
     void next();
@@ -93,6 +113,31 @@ public:
      */
     void build(ClockManager& clock_mgr, Networking& net, LedManager& leds);
 
+    /**
+     * @brief Store the Matter commissioning info for display on the Matter Pair
+     *        screen and the first-run setup screen.  Call from app_main after
+     *        MatterBridge::start() succeeds.
+     */
+    void set_matter_pairing_info(uint32_t pin, uint16_t disc,
+                                 const std::string& code);
+
+    /**
+     * @brief First-time setup screen — call from app_main when no WiFi
+     *        credentials are stored.  Blocks until the user completes setup.
+     *
+     *  User picks one of two paths:
+     *   - "Matter"     → shows commissioning info (PIN + discriminator);
+     *                    user pairs via Home/Alexa app; presses A+B when done.
+     *   - "Setup WiFi" → character-by-character SSID + password entry;
+     *                    credentials are saved to NVS.
+     *
+     * @return true  if WiFi credentials were entered and saved (reload NetCfg).
+     *         false if Matter path was chosen (Matter manages WiFi).
+     *
+     * Call set_matter_pairing_info() before this to populate the Matter screen.
+     */
+    bool first_time_setup();
+
     // ── Display blanking ──────────────────────────────────────────────────────
     /**
      * @brief Must be called from the encoder poll loop on any encoder event.
@@ -118,6 +163,12 @@ private:
     size_t                      current_selection_ = 0;
     size_t                      display_start_     = 0;
     DismissFn                   dismiss_fn_        = nullptr;
+    InputPollFn                 input_poll_fn_     = nullptr;
+
+    // Matter commissioning info (set via set_matter_pairing_info())
+    uint32_t    matter_pin_  = 0;
+    uint16_t    matter_disc_ = 0;
+    std::string matter_code_;
 
     // Blank timer
     static constexpr uint32_t BLANK_TIMEOUT_S = 300;  // 5 minutes
@@ -136,6 +187,27 @@ private:
     void show_clock_status(ClockManager& cm);
     void show_net_status(Networking& net);
     void show_time_screen(ClockManager& cm);
+
+    /**
+     * @brief Blocking character-by-character text entry using the encoder + buttons.
+     *        Returns the entered string when the user confirms (both GPIO buttons).
+     *        Returns empty string if cancelled or input_poll_fn_ is not set.
+     *
+     * Controls:
+     *   Encoder rotate  → scroll through character palette
+     *   Encoder press   → add selected character
+     *   Encoder hold    → delete last character (backspace)
+     *   Button A        → jump to next character group (a-z / A-Z / 0-9 / !@#)
+     *   Button B        → add space
+     *   Both A+B        → confirm and return
+     *
+     * @param title    Displayed on row 0 (e.g. "SSID:" or "Password:")
+     * @param mask     If true, entered characters are shown as '*'
+     * @param max_len  Maximum number of characters to accept (default 63)
+     */
+    std::string show_text_input(const std::string& title,
+                                bool mask    = false,
+                                size_t max_len = 63);
 
     // Blocks until dismiss_fn_ fires or 30s timeout
     void wait_for_dismiss();

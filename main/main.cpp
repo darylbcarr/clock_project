@@ -63,13 +63,14 @@
 #include "webserver.h"
 #include "led_manager.h"
 #include "config_store.h"
+#include "matter_bridge.h"
 
 static const char* TAG = "main";
 
 // ── Configuration defaults (used when NVS has no saved value) ─────────────────
 
-static constexpr const char* WIFI_SSID_DEFAULT     = "Starstuff";
-static constexpr const char* WIFI_PASSWORD_DEFAULT = "ItsyBitsy";
+static constexpr const char* WIFI_SSID_DEFAULT     = "";
+static constexpr const char* WIFI_PASSWORD_DEFAULT = "";
 // static constexpr const char* TZ_OVERRIDE_DEFAULT = "CST6CDT,M3.2.0,M11.1.0";
 static constexpr const char* TZ_OVERRIDE_DEFAULT   = "";
 
@@ -90,6 +91,7 @@ static SeesawDevice  s_seesaw;
 static RotaryEncoder s_encoder(s_seesaw);
 static Menu          s_menu(s_display);
 static LedManager    s_leds(GPIO_NUM_1, GPIO_NUM_2, 30);
+static MatterBridge  s_matter(s_leds);
 static WebServer     s_webserver(s_clock, s_net, s_leds);
 
 // Set true only after seesaw.begin() AND encoder.init() both succeed.
@@ -101,6 +103,24 @@ static bool s_encoder_ok = false;
 // Runs on the encoder_task stack — polls encoder hardware directly under
 // the I2C mutex rather than relying on a flag encoder_task cannot set
 // (it is blocked in the call chain that leads here).
+
+// ── input_poll_fn implementation ──────────────────────────────────────────────
+// Called by Menu::show_text_input() at 50 ms intervals.
+// Reads encoder delta + all button states under the I2C mutex.
+static Menu::InputEvent input_poll_fn()
+{
+    Menu::InputEvent ev = {};
+    ev.btnA = (gpio_get_level(BUTTON_A) == 0);
+    ev.btnB = (gpio_get_level(BUTTON_B) == 0);
+    if (s_encoder_ok) {
+        SemaphoreHandle_t mtx = s_display.getBusMutex();
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        ev.delta   = s_encoder.read_delta();
+        ev.enc_btn = s_encoder.button_pressed();
+        xSemaphoreGive(mtx);
+    }
+    return ev;
+}
 
 // Returns true while a dismiss gesture is held.
 // wait_for_dismiss() in Menu accumulates hold duration and fires after 800ms.
@@ -137,6 +157,7 @@ static void encoder_task(void* /*arg*/)
     uint32_t btnB_press_tick  = 0;
     bool     btnA_long_fired  = false;
     bool     btnB_long_fired  = false;
+    bool     both_last        = false;
     int      h_scroll_counter = 0;
 
     SemaphoreHandle_t mtx = s_display.getBusMutex();
@@ -162,6 +183,7 @@ static void encoder_task(void* /*arg*/)
         bool btnB_fall = (btnB  && !btnB_last);
         bool btnB_rise = (!btnB &&  btnB_last);
         bool both      = btnA && btnB;
+        bool both_fall = both && !both_last;
 
         // ── Wake-up suppression ───────────────────────────────────────────────
         // Any input wakes the display; the triggering gesture is consumed.
@@ -194,6 +216,12 @@ static void encoder_task(void* /*arg*/)
             // to a single button doesn't trigger that button's short/long press.
             btnA_long_fired = true;
             btnB_long_fired = true;
+            // Falling edge → navigate back (also serves as dismiss in info screens)
+            if (both_fall && !s_menu.is_blanked()) {
+                s_menu.back();
+                s_menu.render_scrolled(false);
+                h_scroll_counter = 0;
+            }
         } else {
             // ── Falling edges (press start) ───────────────────────────────────
             if (btnA_fall) {
@@ -246,6 +274,7 @@ static void encoder_task(void* /*arg*/)
 
         btnA_last = btnA;
         btnB_last = btnB;
+        both_last = both;
 
         // ── Encoder button ────────────────────────────────────────────────────
         if (btn_now && !btn_last) {
@@ -390,6 +419,11 @@ extern "C" void app_main()
     }
     s_leds.start();
 
+    // ── 2c. Matter bridge — init after LED strips are running ─────────────────
+    if (s_matter.init() != ESP_OK) {
+        ESP_LOGW(TAG, "Matter init failed — continuing without Matter");
+    }
+
     // Apply persisted LED config (after start so the effect task is running)
     for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
         LedManager::Target tgt = (i == 0) ? LedManager::Target::STRIP_1
@@ -418,10 +452,38 @@ extern "C" void app_main()
     // dismiss_fn polls the encoder directly (with mutex) so it works even
     // while encoder_task is blocked inside wait_for_dismiss.
     s_menu.set_dismiss_fn(dismiss_fn);
+    s_menu.set_input_fn(input_poll_fn);
     ESP_LOGI(TAG, "Building menu...");
     s_menu.build(s_clock, s_net, s_leds);
 
-    // ── 4. Networking — async WiFi + SNTP + geolocation ──────────────────────
+    // ── 4. Matter stack — start before networking so BLE commissioning and
+    //        WiFi connect can proceed concurrently ─────────────────────────────
+    s_matter.start();
+
+    // ── 4a. Populate Matter pairing info for the menu and first-run screen ────
+    {
+        auto info = s_matter.get_commissioning_info();
+        s_menu.set_matter_pairing_info(info.pin_code, info.discriminator,
+                                       s_matter.manual_code());
+    }
+
+    // ── 4b. First-run setup — block until the user chooses a WiFi path ────────
+    // Skip when:
+    //   (a) SSID is stored in our ConfigStore (manual WiFi path), OR
+    //   (b) the device already has a Matter fabric (previously commissioned —
+    //       CHIP reconnects to WiFi automatically using its own stored credentials).
+    if (netCfg.ssid[0] == '\0' && !s_matter.is_commissioned()) {
+        bool wifi_set = s_menu.first_time_setup();
+        if (wifi_set) {
+            // Reload credentials saved by the WiFi setup path
+            ConfigStore::load(netCfg);
+            wifi_ssid = (netCfg.ssid[0] != '\0') ? netCfg.ssid : WIFI_SSID_DEFAULT;
+            wifi_pass = (netCfg.password[0] != '\0') ? netCfg.password : WIFI_PASSWORD_DEFAULT;
+        }
+        // if !wifi_set: Matter path chosen — Networking skips connect, watches IP event
+    }
+
+    // ── 5. Networking — async WiFi + SNTP + geolocation ──────────────────────
     s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
     if (tz_override[0] != '\0') {
         s_net.set_timezone_override(tz_override);

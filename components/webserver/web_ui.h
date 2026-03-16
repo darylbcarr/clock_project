@@ -293,7 +293,7 @@ input[type=range]::-webkit-slider-thumb {
   <div class="card">
     <div class="card-title">Observed Clock Position</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-      Look at the clock hands and enter the time the minute hand currently shows, then press the button.
+      Look at the clock hands and enter the time the hands currently show, then press the button.
     </p>
     <div class="obs-row">
       <input type="time" id="obs-time" value="12:00">

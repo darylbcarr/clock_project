@@ -165,7 +165,7 @@ private:
 /// How many motor output revolutions move the minute hand by exactly 1 minute.
 /// For a direct-drive 60-tooth / 1-tooth arrangement this would be 1.
 /// Set to 1 for now; caller can scale as needed.
-static constexpr float MOTOR_REVS_PER_CLOCK_MINUTE = 1.0f;
+static constexpr float MOTOR_REVS_PER_CLOCK_MINUTE = 0.1499f;
 
 /// Derived: steps per clock-minute
 static constexpr int STEPS_PER_CLOCK_MINUTE =

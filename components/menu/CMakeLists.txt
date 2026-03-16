@@ -6,6 +6,7 @@ idf_component_register(
         clock_manager
         networking
         led
+        config_store
         esp_timer
         freertos
         log
