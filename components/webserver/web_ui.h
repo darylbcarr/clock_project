@@ -568,6 +568,34 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
+  <!-- Firmware Update -->
+  <div class="card">
+    <div class="card-title">Firmware Update</div>
+    <div class="info-grid" style="margin-bottom:12px;">
+      <div class="info-item">
+        <div class="info-label">Running</div>
+        <div class="info-val" id="ota-running">—</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Latest</div>
+        <div class="info-val" id="ota-latest">—</div>
+      </div>
+    </div>
+    <div id="ota-status" style="font-size:12px;margin-bottom:12px;color:var(--muted);min-height:16px;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="checkForUpdates()">Check for Updates</button>
+      <button class="btn btn-sm" id="ota-update-btn" style="flex:1;display:none;" onclick="updateNow()">Update Now</button>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--dim);margin-bottom:6px;">Auto Update</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      When enabled, the device checks GitHub for new firmware every 24&nbsp;hours and installs automatically.
+    </p>
+    <div class="dir-toggle">
+      <button class="dir-opt" id="ota-auto-on"  onclick="setAutoUpdate(true)">Enabled</button>
+      <button class="dir-opt" id="ota-auto-off" onclick="setAutoUpdate(false)">Disabled</button>
+    </div>
+  </div>
+
 </div><!-- /sec-config -->
 </div><!-- /main -->
 
@@ -675,6 +703,42 @@ function postCfg(body) {
   .then(r => r.json())
   .then(d => { toast(d.ok ? 'Saved' : 'Error', d.ok ? 'ok' : 'err'); })
   .catch(() => toast('Network error', 'err'));
+}
+
+function postOta(body) {
+  return fetch('/api/ota', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+  .then(r => r.json())
+  .catch(() => { toast('Network error', 'err'); });
+}
+
+// ── OTA commands ─────────────────────────────────────────────────────────────
+function checkForUpdates() {
+  setText('ota-status', 'Checking...');
+  setText('ota-latest', '...');
+  postOta({action: 'check'}).then(() => {
+    toast('Checking for updates — result appears in a few seconds');
+  });
+}
+
+function updateNow() {
+  if (!confirm('Install firmware update now?\nThe device will restart automatically when done.')) return;
+  setText('ota-status', 'Downloading update — device will restart when done...');
+  document.getElementById('ota-update-btn').style.display = 'none';
+  postOta({action: 'update'}).then(() => {
+    toast('Update started');
+  });
+}
+
+function setAutoUpdate(val) {
+  document.getElementById('ota-auto-on').classList.toggle('active', val);
+  document.getElementById('ota-auto-off').classList.toggle('active', !val);
+  postOta({auto_update: val}).then(d => {
+    if (d && d.ok) toast(val ? 'Auto update enabled' : 'Auto update disabled');
+  });
 }
 
 // ── Clock commands ───────────────────────────────────────────────────────────
@@ -846,7 +910,28 @@ function applyData(d) {
   }
 
   // Info section
-  setText('inf-fw', d.fw_version || '—');
+  setText('inf-fw', d.fw_version ? 'v' + d.fw_version : '—');
+
+  // OTA section
+  if (d.ota_running !== undefined) setText('ota-running', 'v' + d.ota_running);
+  if (d.ota_latest !== undefined) {
+    setText('ota-latest', d.ota_checking ? 'Checking...' : (d.ota_latest ? 'v' + d.ota_latest : '—'));
+  }
+  if (d.ota_avail) {
+    setText('ota-status', '\u26A0 Update available!');
+    document.getElementById('ota-update-btn').style.display = '';
+    document.getElementById('ota-update-btn').style.background = 'var(--warn)';
+    document.getElementById('ota-update-btn').style.color = '#000';
+  } else if (d.ota_latest && !d.ota_checking) {
+    setText('ota-status', '\u2713 Up to date');
+    document.getElementById('ota-update-btn').style.display = 'none';
+  } else if (d.ota_checking) {
+    setText('ota-status', 'Checking...');
+  }
+  if (d.ota_auto !== undefined) {
+    document.getElementById('ota-auto-on')?.classList.toggle('active', d.ota_auto);
+    document.getElementById('ota-auto-off')?.classList.toggle('active', !d.ota_auto);
+  }
   setText('inf-uptime', fmtUptime(d.uptime_s || 0));
   setText('inf-heap', fmtHeap(d.free_heap || 0));
   const dispPos = (d.displayed_hour >= 0 && d.displayed_min >= 0)

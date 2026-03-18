@@ -666,6 +666,7 @@ extern "C" void app_main()
     s_menu.set_dismiss_fn(dismiss_fn);
     s_menu.set_input_fn(input_poll_fn);
     s_menu.set_encoder_ok(s_encoder_ok);
+    s_menu.set_ota(&s_ota);
     ESP_LOGI(TAG, "Building menu...");
     s_menu.build(s_clock, s_net, s_leds);
 
@@ -803,6 +804,7 @@ extern "C" void app_main()
     }
 
     // ── 4a. Web server — starts HTTP + WebSocket on port 80 ──────────────────
+    s_webserver.set_ota(&s_ota);
     s_webserver.start();
 
     // ── 4b. OTA update checker — background task, waits for WiFi then polls ──

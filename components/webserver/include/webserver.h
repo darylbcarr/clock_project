@@ -4,6 +4,7 @@
 #include "networking.h"
 
 class LedManager;
+class OtaManager;
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,12 +22,16 @@ public:
 
     bool is_running() const { return server_ != nullptr; }
 
+    /** @brief Wire in the OtaManager before start() to enable the /api/ota endpoint. */
+    void set_ota(OtaManager* ota) { ota_ = ota; }
+
 private:
     // HTTP handlers (static, stored as context via req->user_ctx)
     static esp_err_t on_root(httpd_req_t* req);
     static esp_err_t on_api_status(httpd_req_t* req);
     static esp_err_t on_api_cmd(httpd_req_t* req);
     static esp_err_t on_api_cfg(httpd_req_t* req);
+    static esp_err_t on_api_ota(httpd_req_t* req);
     static esp_err_t on_ws(httpd_req_t* req);
 
     // Background tasks
@@ -45,6 +50,7 @@ private:
     ClockManager&  clock_mgr_;
     Networking&    net_;
     LedManager&    leds_;
+    OtaManager*    ota_            = nullptr;
     httpd_handle_t server_          = nullptr;
     TaskHandle_t   ws_task_handle_  = nullptr;
     TaskHandle_t   cmd_task_handle_ = nullptr;

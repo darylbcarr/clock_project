@@ -14,11 +14,15 @@
 #include "esp_https_ota.h"
 #include "esp_crt_bundle.h"
 #include "esp_ota_ops.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "cJSON.h"
 
 static const char* TAG = "ota";
+
+static constexpr const char* NVS_NS  = "ota_cfg";
+static constexpr const char* NVS_KEY = "auto_upd";
 
 // ── Public: running version ───────────────────────────────────────────────────
 
@@ -27,17 +31,73 @@ const char* OtaManager::running_version()
     return esp_app_get_description()->version;
 }
 
+// ── Public: is_update_available ───────────────────────────────────────────────
+
+bool OtaManager::is_update_available() const
+{
+    return latest_ver_buf_[0] != '\0'
+        && strcmp(latest_ver_buf_, running_version()) != 0;
+}
+
+// ── NVS settings ─────────────────────────────────────────────────────────────
+
+void OtaManager::load_settings()
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        uint8_t val = 1;
+        nvs_get_u8(h, NVS_KEY, &val);
+        auto_update_ = (val != 0);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "Auto update: %s", auto_update_ ? "enabled" : "disabled");
+}
+
+void OtaManager::save_settings()
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, NVS_KEY, auto_update_ ? 1 : 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+void OtaManager::set_auto_update(bool en)
+{
+    auto_update_ = en;
+    save_settings();
+    ESP_LOGI(TAG, "Auto update set to: %s", en ? "enabled" : "disabled");
+}
+
 // ── Public: start background task ─────────────────────────────────────────────
 
 void OtaManager::start(Display& display, std::function<bool()> is_connected_fn)
 {
     display_         = &display;
     is_connected_fn_ = is_connected_fn;
+    action_queue_    = xQueueCreate(1, sizeof(TaskAction));
     xTaskCreate(ota_task, "ota_check", 8192, this, 2, nullptr);
     ESP_LOGI(TAG, "OTA task started  (running v%s)", running_version());
 }
 
-// ── Public: manual check ──────────────────────────────────────────────────────
+// ── Public: triggers ──────────────────────────────────────────────────────────
+
+void OtaManager::trigger_check()
+{
+    if (!action_queue_) return;
+    TaskAction a = TaskAction::CHECK_ONLY;
+    xQueueOverwrite(action_queue_, &a);
+}
+
+void OtaManager::trigger_update()
+{
+    if (!action_queue_) return;
+    TaskAction a = TaskAction::CHECK_AND_INSTALL;
+    xQueueOverwrite(action_queue_, &a);
+}
+
+// ── Public: synchronous check (console) ───────────────────────────────────────
 
 esp_err_t OtaManager::check_now()
 {
@@ -53,9 +113,9 @@ esp_err_t OtaManager::check_now()
 void OtaManager::ota_task(void* arg)
 {
     auto* self = static_cast<OtaManager*>(arg);
+    self->load_settings();
 
-    // Wait for WiFi — poll every 5 s, give up waiting after BOOT_DELAY_S and
-    // try anyway (the HTTP client will fail gracefully if not connected).
+    // Wait for WiFi before first check — poll every 5 s up to BOOT_DELAY_S.
     int waited = 0;
     while (waited < BOOT_DELAY_S && self->is_connected_fn_ &&
            !self->is_connected_fn_()) {
@@ -64,8 +124,32 @@ void OtaManager::ota_task(void* arg)
     }
 
     while (true) {
-        self->do_check_and_update();
-        vTaskDelay(pdMS_TO_TICKS((uint32_t)CHECK_INTERVAL_S * 1000));
+        // Block until a manual trigger arrives or the periodic interval elapses.
+        TaskAction action = TaskAction::PERIODIC;
+        TickType_t timeout_ticks = pdMS_TO_TICKS((uint32_t)CHECK_INTERVAL_S * 1000UL);
+        xQueueReceive(self->action_queue_, &action, timeout_ticks);
+
+        self->checking_ = true;
+
+        if (action == TaskAction::CHECK_ONLY) {
+            // Fetch version info only — update latest_ver_buf_, do not install.
+            char ver[VER_BUF_LEN] = {};
+            char url[URL_BUF_LEN] = {};
+            if (self->fetch_version_info(ver, sizeof(ver), url, sizeof(url)) && ver[0]) {
+                strncpy(self->latest_ver_buf_, ver, VER_BUF_LEN - 1);
+                ESP_LOGI(TAG, "Version check: running v%s  latest v%s",
+                         running_version(), self->latest_ver_buf_);
+            }
+        } else if (action == TaskAction::CHECK_AND_INSTALL) {
+            self->do_check_and_update();
+        } else {
+            // PERIODIC: only check+install if auto update is enabled.
+            if (self->auto_update_) {
+                self->do_check_and_update();
+            }
+        }
+
+        self->checking_ = false;
     }
 }
 
@@ -74,17 +158,16 @@ void OtaManager::ota_task(void* arg)
 bool OtaManager::fetch_version_info(char* out_ver, size_t ver_len,
                                     char* out_url, size_t url_len)
 {
-    // Allocate HTTP receive buffer on the heap — version.json is tiny.
     static constexpr int BUF = 512;
     char* buf = static_cast<char*>(malloc(BUF));
     if (!buf) return false;
     memset(buf, 0, BUF);
 
     esp_http_client_config_t cfg = {};
-    cfg.url                = VERSION_CHECK_URL;
-    cfg.timeout_ms         = HTTP_TIMEOUT_MS;
-    cfg.method             = HTTP_METHOD_GET;
-    cfg.crt_bundle_attach  = esp_crt_bundle_attach;  // validates GitHub's TLS cert
+    cfg.url               = VERSION_CHECK_URL;
+    cfg.timeout_ms        = HTTP_TIMEOUT_MS;
+    cfg.method            = HTTP_METHOD_GET;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { free(buf); return false; }
@@ -95,8 +178,7 @@ bool OtaManager::fetch_version_info(char* out_ver, size_t ver_len,
         int n = esp_http_client_read(client, buf, BUF - 1);
         buf[n > 0 ? n : 0] = '\0';
 
-        int status = esp_http_client_get_status_code(client);
-        if (status == 200 && n > 0) {
+        if (esp_http_client_get_status_code(client) == 200 && n > 0) {
             cJSON* root = cJSON_Parse(buf);
             if (root) {
                 cJSON* ver = cJSON_GetObjectItemCaseSensitive(root, "version");
@@ -111,7 +193,8 @@ bool OtaManager::fetch_version_info(char* out_ver, size_t ver_len,
                 ESP_LOGE(TAG, "version.json parse failed");
             }
         } else {
-            ESP_LOGE(TAG, "version.json HTTP %d", status);
+            ESP_LOGE(TAG, "version.json HTTP %d",
+                     esp_http_client_get_status_code(client));
         }
     } else {
         ESP_LOGE(TAG, "version.json fetch failed (no network?)");
@@ -137,6 +220,8 @@ esp_err_t OtaManager::do_check_and_update()
         return ESP_FAIL;
     }
 
+    // Always update cached latest version.
+    strncpy(latest_ver_buf_, new_ver, VER_BUF_LEN - 1);
     ESP_LOGI(TAG, "Latest: v%s  Running: v%s", new_ver, running_version());
 
     if (strcmp(new_ver, running_version()) == 0) {
@@ -148,20 +233,18 @@ esp_err_t OtaManager::do_check_and_update()
     ESP_LOGI(TAG, "Update available: v%s → v%s", running_version(), new_ver);
 
     if (display_) {
+        char line[80];
         display_->clear();
         display_->print(0, "  OTA Update   ");
-        // Show old → new; use a large buffer, display truncates to 16 chars
-        char line[80];
         snprintf(line, sizeof(line), "v%s->v%s", running_version(), new_ver);
         display_->print(2, line);
         display_->print(4, "Downloading...");
         display_->print(6, "Do not power off");
     }
 
-    // ── esp_https_ota download ────────────────────────────────────────────────
     esp_http_client_config_t http_cfg = {};
     http_cfg.url               = bin_url;
-    http_cfg.timeout_ms        = 60000;   // large binary — generous timeout
+    http_cfg.timeout_ms        = 60000;
     http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
     http_cfg.keep_alive_enable = true;
 
@@ -182,11 +265,11 @@ esp_err_t OtaManager::do_check_and_update()
     } else {
         ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
         if (display_) {
+            char ver_line[40];
             display_->clear();
             display_->print(0, "  OTA Failed    ");
             display_->print(2, esp_err_to_name(ret));
             display_->print(5, "Still on:");
-            char ver_line[20];
             snprintf(ver_line, sizeof(ver_line), "  v%s", running_version());
             display_->print(6, ver_line);
             vTaskDelay(pdMS_TO_TICKS(4000));

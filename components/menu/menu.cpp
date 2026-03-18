@@ -35,6 +35,7 @@
 #include "clock_manager.h"
 #include "networking.h"
 #include "led_manager.h"
+#include "ota_manager.h"
 #include "config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -974,6 +975,87 @@ void Menu::action_task_fn(void *arg)
     }
 }
 
+// ── show_ota_screen ───────────────────────────────────────────────────────────
+// Triggers a version check on the ota_task, waits for result, then offers to
+// install if an update is available.  Runs on encoder_task stack via callback.
+
+void Menu::show_ota_screen()
+{
+    if (!ota_) return;
+
+    display_.clear();
+    display_.print(0, " Firmware Update");
+    char line[40];
+    snprintf(line, sizeof(line), " v%s", OtaManager::running_version());
+    display_.print(2, "Current:");
+    display_.print(3, line);
+    display_.print(5, "Checking...");
+
+    ota_->trigger_check();
+
+    // Wait up to 20 s for the ota_task to complete the version fetch.
+    // Give 1 s initial slack so the task has time to set checking_ = true.
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    for (int i = 0; i < 38; i++) {
+        if (!ota_->is_checking()) break;
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    // ── Show result ───────────────────────────────────────────────────────────
+    display_.clear();
+    display_.print(0, " Firmware Update");
+    snprintf(line, sizeof(line), " v%s", OtaManager::running_version());
+    display_.print(2, "Current:");
+    display_.print(3, line);
+    display_.print(5, "Latest:");
+    if (ota_->latest_version()[0]) {
+        snprintf(line, sizeof(line), " v%s", ota_->latest_version());
+        display_.print(6, line);
+    } else {
+        display_.print(6, " unavailable");
+    }
+
+    if (ota_->is_update_available()) {
+        display_.print(7, encoder_ok_ ? "Sel:Install B:No" : "A:Install  B:No ");
+
+        // Wait for user to confirm install or dismiss.
+        bool confirmed = false;
+        if (input_poll_fn_) {
+            InputEvent prev = {};
+            for (int t = 0; t < 600; t++) {          // up to 30 s (50 ms × 600)
+                vTaskDelay(pdMS_TO_TICKS(50));
+                InputEvent ev = input_poll_fn_();
+                bool enc_press = ev.enc_btn && !prev.enc_btn;
+                bool a_press   = ev.btnA   && !prev.btnA;
+                bool b_press   = ev.btnB   && !prev.btnB;
+                if (enc_press || a_press) { confirmed = true; break; }
+                if (b_press) break;
+                prev = ev;
+            }
+        }
+
+        if (confirmed) {
+            display_.clear();
+            display_.print(0, " Firmware Update");
+            display_.print(3, "  Updating...   ");
+            display_.print(5, "Do not power off");
+            ota_->trigger_update();
+            // Block here — device restarts automatically on success.
+            // If update fails, ota_task shows an error on the display,
+            // then we fall through after 90 s and return to the menu.
+            vTaskDelay(pdMS_TO_TICKS(90000));
+        }
+    } else if (ota_->latest_version()[0]) {
+        display_.print(7, "   Up to date   ");
+        vTaskDelay(pdMS_TO_TICKS(2500));
+    } else {
+        // Check failed — show briefly then return.
+        vTaskDelay(pdMS_TO_TICKS(2500));
+    }
+
+    render();
+}
+
 // ── build() — full menu tree with wired callbacks ────────────────────────────
 
 void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
@@ -1124,6 +1206,28 @@ void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
 
     sys->addChild(std::make_unique<MenuItem>("Uptime", [this, &cm, &net]()
                                              { show_info_screen(cm, net); }));
+
+    // ── System → Update ───────────────────────────────────────────────────────
+    if (ota_) {
+        auto upd = std::make_unique<MenuItem>("Update");
+
+        upd->addChild(std::make_unique<MenuItem>("Check Now", [this]()
+            { show_ota_screen(); }));
+
+        upd->addChild(std::make_unique<MenuItem>("Auto Update", [this]()
+        {
+            if (!ota_) return;
+            bool now_en = !ota_->is_auto_update_enabled();
+            ota_->set_auto_update(now_en);
+            display_.clear();
+            display_.print(0, " Auto Update   ");
+            display_.print(3, now_en ? "    Enabled    " : "    Disabled   ");
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            render();
+        }));
+
+        sys->addChild(std::move(upd));
+    }
 
     // ── Assemble ──────────────────────────────────────────────────────────────
     root->addChild(std::move(clk));

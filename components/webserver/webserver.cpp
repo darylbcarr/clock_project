@@ -1,6 +1,7 @@
 #include "webserver.h"
 #include "web_ui.h"
 #include "led_manager.h"
+#include "ota_manager.h"
 #include "config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -45,10 +46,11 @@ void WebServer::start()
     }
 
     // Register URI handlers — store 'this' as user_ctx
-    httpd_uri_t root = { "/",           HTTP_GET,  on_root,       this };
-    httpd_uri_t stat = { "/api/status", HTTP_GET,  on_api_status, this };
-    httpd_uri_t cmd  = { "/api/cmd",    HTTP_POST, on_api_cmd,    this };
-    httpd_uri_t cfg_uri = { "/api/cfg",  HTTP_POST, on_api_cfg,    this };
+    httpd_uri_t root    = { "/",           HTTP_GET,  on_root,       this };
+    httpd_uri_t stat    = { "/api/status", HTTP_GET,  on_api_status, this };
+    httpd_uri_t cmd     = { "/api/cmd",    HTTP_POST, on_api_cmd,    this };
+    httpd_uri_t cfg_uri = { "/api/cfg",    HTTP_POST, on_api_cfg,    this };
+    httpd_uri_t ota_uri = { "/api/ota",    HTTP_POST, on_api_ota,    this };
     httpd_uri_t ws   = {
         .uri      = "/ws",
         .method   = HTTP_GET,
@@ -61,6 +63,7 @@ void WebServer::start()
     httpd_register_uri_handler(server_, &stat);
     httpd_register_uri_handler(server_, &cmd);
     httpd_register_uri_handler(server_, &cfg_uri);
+    httpd_register_uri_handler(server_, &ota_uri);
     httpd_register_uri_handler(server_, &ws);
 
     xTaskCreate(ws_push_task,  "ws_push",  4096, this, 2, &ws_task_handle_);
@@ -272,6 +275,57 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
     return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
 }
 
+// ── OTA endpoint ─────────────────────────────────────────────────────────────
+// POST /api/ota
+//   {"action": "check"}           → trigger version-only check (non-blocking)
+//   {"action": "update"}          → trigger full OTA install (non-blocking)
+//   {"auto_update": true/false}   → persist auto-update setting
+
+esp_err_t WebServer::on_api_ota(httpd_req_t* req)
+{
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+
+    char buf[128] = {};
+    int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+
+    const char* msg = "OK";
+
+    if (self->ota_) {
+        cJSON* body = cJSON_Parse(buf);
+        if (body) {
+            cJSON* action = cJSON_GetObjectItem(body, "action");
+            cJSON* autoj  = cJSON_GetObjectItem(body, "auto_update");
+
+            if (cJSON_IsString(action)) {
+                if (strcmp(action->valuestring, "check") == 0) {
+                    self->ota_->trigger_check();
+                    msg = "Check triggered";
+                } else if (strcmp(action->valuestring, "update") == 0) {
+                    self->ota_->trigger_update();
+                    msg = "Update triggered";
+                }
+            }
+            if (cJSON_IsBool(autoj)) {
+                self->ota_->set_auto_update(cJSON_IsTrue(autoj));
+                msg = "Auto-update saved";
+            }
+            cJSON_Delete(body);
+        }
+    } else {
+        msg = "OTA not available";
+    }
+
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"msg\":\"%s\"}", msg);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+
 // ── LED config snapshot ───────────────────────────────────────────────────────
 
 void WebServer::save_led_config()
@@ -444,7 +498,14 @@ char* WebServer::build_status_json()
     cJSON_AddNumberToObject(root, "sensor_adc",        clock_mgr_.last_sensor_adc());
     cJSON_AddBoolToObject  (root, "motor_reverse",     clock_mgr_.is_motor_reverse());
     cJSON_AddNumberToObject(root, "step_delay_us",     static_cast<double>(clock_mgr_.get_step_delay_us()));
-    cJSON_AddStringToObject(root, "fw_version",        "1.0.0");
+    cJSON_AddStringToObject(root, "fw_version",        OtaManager::running_version());
+
+    // OTA status
+    cJSON_AddStringToObject(root, "ota_running",  OtaManager::running_version());
+    cJSON_AddStringToObject(root, "ota_latest",   ota_ ? ota_->latest_version()            : "");
+    cJSON_AddBoolToObject  (root, "ota_auto",     ota_ ? ota_->is_auto_update_enabled()    : true);
+    cJSON_AddBoolToObject  (root, "ota_avail",    ota_ ? ota_->is_update_available()       : false);
+    cJSON_AddBoolToObject  (root, "ota_checking", ota_ ? ota_->is_checking()               : false);
 
     // Network / WiFi
     cJSON_AddBoolToObject  (root, "wifi",        net.wifi_connected);

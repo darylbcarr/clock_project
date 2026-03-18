@@ -40,6 +40,7 @@ private:
 class ClockManager;
 class Networking;
 class LedManager;
+class OtaManager;
 
 class Menu {
 public:
@@ -91,6 +92,12 @@ public:
      *        Affects the hint line shown on the Matter pairing screen.
      */
     void set_encoder_ok(bool ok)       { encoder_ok_     = ok; }
+
+    /**
+     * @brief Inject the OtaManager pointer so the menu can expose firmware
+     *        update features under System → Update.  Call before build().
+     */
+    void set_ota(OtaManager* ota)      { ota_            = ota; }
 
     // ── Navigation ────────────────────────────────────────────────────────────
     void next();
@@ -189,6 +196,7 @@ private:
     DismissFn                   dismiss_fn_        = nullptr;
     InputPollFn                 input_poll_fn_     = nullptr;
     bool                        encoder_ok_        = false;
+    OtaManager*                 ota_               = nullptr;
 
     // Matter commissioning info (set via set_matter_pairing_info())
     uint32_t    matter_pin_  = 0;
@@ -212,6 +220,7 @@ private:
     void show_clock_status(ClockManager& cm);
     void show_net_status(Networking& net);
     void show_time_screen(ClockManager& cm);
+    void show_ota_screen();   // firmware update check + optional install
 
     /**
      * @brief Blocking character-by-character text entry using the encoder + buttons.
