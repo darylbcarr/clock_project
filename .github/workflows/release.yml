@@ -23,12 +23,21 @@ jobs:
       # ── 2. Build with ESP-IDF ─────────────────────────────────────────────────
       # Uses the official Espressif CI Docker action.
       # idf_version must match the version used in development (v5.4.1).
+      # Two-phase build:
+      #   a) reconfigure downloads managed components (esp_matter 1.4.2)
+      #   b) apply the Nullable.h patch (same fix as local components/espressif__esp_matter)
+      #   c) full build
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.4.1
           target: esp32s3
-          command: idf.py build
+          command: >-
+            rm -f dependencies.lock &&
+            idf.py reconfigure &&
+            sed -i '116s/return.*/return true; \/\/ Temporary Hack/'
+            managed_components/espressif__esp_matter/connectedhomeip/connectedhomeip/src/app/data-model/Nullable.h &&
+            idf.py build
 
       # ── 3. Extract version from tag (strip leading "v") ───────────────────────
       - name: Extract version
