@@ -7,6 +7,7 @@ idf_component_register(
     REQUIRES
         clock_manager
         esp_wifi
+        esp_coex
         esp_event
         esp_netif
         esp_http_client

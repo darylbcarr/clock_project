@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clock Project — Matter Pairing</title>
+  <title>Hollow Clock — Matter Pairing</title>
   <script src="qrcode.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -216,7 +216,7 @@
 <body>
 
 <header>
-  <h1>Clock Project</h1>
+  <h1>Hollow Clock</h1>
   <p>Matter commissioning — generate a pairing QR code from your device's discriminator</p>
 </header>
 
@@ -282,8 +282,8 @@
 <div class="card steps">
   <h2>Pairing Steps</h2>
   <ol>
-    <li>Find the discriminator in the device serial output:<br>
-        <strong><code>discriminator=XXXX/01 cm=1</code></strong></li>
+    <li>Find the discriminator in the display output:<br>
+        <strong><code>Disc: XXXX</code></strong></li>
     <li>Enter the discriminator above and click <strong>Generate</strong>.</li>
     <li>If BLE fast advertising has timed out (&gt;30 s since boot), type
         <strong><code>matter-pair</code></strong> at the <code>clock&gt;</code> UART prompt

@@ -20,11 +20,13 @@
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_coexist.h"
 
 static const char* TAG = "networking";
 
 // ── Module-static instance pointer for C-linkage callbacks ───────────────────
 Networking* Networking::s_instance_ = nullptr;
+
 
 // ── HTTP receive buffer ───────────────────────────────────────────────────────
 static constexpr int HTTP_BUF_SIZE = 2048;
@@ -62,6 +64,12 @@ void Networking::set_timezone_override(const char* tz)
 
 void Networking::begin()
 {
+    if (begun_) {
+        ESP_LOGI(TAG, "Networking::begin() already called — skipping");
+        return;
+    }
+    begun_ = true;
+
     ESP_LOGI(TAG, "Networking::begin()");
 
     // NVS is initialised by main.cpp before begin() is called.
@@ -103,7 +111,17 @@ void Networking::begin()
         IP_EVENT, IP_EVENT_STA_GOT_IP,
         s_ip_event_handler, this, nullptr));
 
-    // 6. Configure WiFi and connect — only when credentials are available.
+    // 6. Configure SNTP before any path that might call start_sntp().
+    //    Guard against double-init: Matter or a prior begin() may have already
+    //    started SNTP (esp_sntp_setoperatingmode asserts if called while running).
+    if (!esp_sntp_enabled()) {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, NTP_SERVER_1);
+        esp_sntp_setservername(1, NTP_SERVER_2);
+        sntp_set_time_sync_notification_cb(s_sntp_sync_cb);
+    }
+
+    // 7. Connect WiFi or bootstrap from Matter's existing connection.
     //    If SSID is empty, Matter manages WiFi; we skip connect but still
     //    watch for the IP event so SNTP can start when Matter gets an address.
     if (ssid_[0] != '\0') {
@@ -128,6 +146,28 @@ void Networking::begin()
         // On ESP_OK, WIFI_EVENT_STA_START fires → s_wifi_event_handler → connect()
     } else {
         ESP_LOGI(TAG, "No SSID configured — Matter manages WiFi");
+        // Give WiFi higher coex priority so it can complete the 4-way
+        // association handshake without timing out due to BLE occupying the
+        // radio during BLE commissioning.  BLE still works with lower priority
+        // (its indications are retried automatically), just at higher latency.
+        // Restored to ESP_COEX_PREFER_BALANCE once WiFi has an IP.
+        esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+        ESP_LOGI(TAG, "Coex preference → WIFI (Matter BLE commissioning path)");
+
+        // Ensure WiFi STA is in the right mode and started so CHIP's
+        // NetworkCommissioning driver can use it during BLE commissioning.
+        // esp_matter::start() should have done this, but being explicit here
+        // avoids a race where our begin() is called before CHIP's async WiFi
+        // init task has completed.
+        {
+            esp_err_t e = esp_wifi_set_mode(WIFI_MODE_STA);
+            if (e != ESP_OK)
+                ESP_LOGW(TAG, "WiFi set_mode STA (Matter): %s", esp_err_to_name(e));
+            e = esp_wifi_start();
+            if (e != ESP_OK)
+                ESP_LOGW(TAG, "WiFi start (Matter): %s (may already be started)",
+                         esp_err_to_name(e));
+        }
         // If Matter already obtained an IP before we registered our event handler,
         // bootstrap SNTP now instead of waiting for an event that already fired.
         esp_netif_ip_info_t ip_info = {};
@@ -137,12 +177,6 @@ void Networking::begin()
             on_got_ip(&ip_info);
         }
     }
-
-    // 7. SNTP mode (safe now; stack is up — just configure, don't init yet)
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, NTP_SERVER_1);
-    esp_sntp_setservername(1, NTP_SERVER_2);
-    sntp_set_time_sync_notification_cb(s_sntp_sync_cb);
 
     // 8. Apply timezone override immediately if set
     if (tz_override_[0] != '\0') {
@@ -220,6 +254,12 @@ void Networking::on_got_ip(esp_netif_ip_info_t* ip_info)
     ESP_LOGI(TAG, "Got IP  local=%s  gw=%s",
              status_.local_ip, status_.gateway);
 
+    // WiFi connected — restore balanced coex so BLE/Matter-over-IP coexist fairly
+    if (ssid_[0] == '\0') {
+        esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
+        ESP_LOGI(TAG, "Coex preference → BALANCE (WiFi connected)");
+    }
+
     // Start SNTP now that we have IP
     start_sntp();
 
@@ -231,6 +271,20 @@ void Networking::on_wifi_disconnected()
 {
     status_.wifi_connected = false;
     status_.rssi           = 0;
+
+    // When SSID is empty, Matter's NetworkCommissioning driver manages WiFi.
+    // Let CHIP handle its own reconnect cycle (it retries after
+    // CONFIG_WIFI_STATION_RECONNECT_INTERVAL = 1000 ms, which is long enough
+    // for the coex module's internal reconnect lock to clear naturally).
+    // Do NOT call esp_wifi_connect() here and do NOT restart the driver:
+    // stop/start clears the WiFi AP scan cache, forcing a fresh channel scan
+    // on every connect attempt — that scan takes 1–3 s and consumes the
+    // post-AddNOC BLE quiet windows before authentication can start.
+    if (ssid_[0] == '\0') {
+        ESP_LOGD(TAG, "WiFi disconnected — Matter manages reconnect");
+        return;
+    }
+
     ESP_LOGW(TAG, "WiFi disconnected (retry %d/%d)",
              retry_count_, MAX_RETRY);
 
@@ -250,6 +304,10 @@ void Networking::on_wifi_disconnected()
 
 void Networking::start_sntp()
 {
+    if (esp_sntp_enabled()) {
+        ESP_LOGI(TAG, "SNTP already running — skipping init");
+        return;
+    }
     esp_sntp_init();
     ESP_LOGI(TAG, "SNTP started (servers: %s, %s)", NTP_SERVER_1, NTP_SERVER_2);
 }

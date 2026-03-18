@@ -40,18 +40,29 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
 CONFIG_HTTPD_WS_SUPPORT=y
 
 # ── IRAM reduction ───────────────────────────────────────────────────────────
-# Matter + BLE pushes IRAM over the segment limit.  Moving WiFi ISR code and
-# heap functions to flash recovers ~20+ KB IRAM with negligible impact on a
-# low-throughput IoT device.
-CONFIG_ESP_WIFI_IRAM_OPT=n
-CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+# WiFi ISR MUST stay in IRAM (default=y) for reliable BLE+WiFi coexistence.
+# When WiFi ISR runs from flash (=n), latency during BLE radio activity is
+# high enough to lose association timings, causing every connection attempt to
+# fail with "Coexist: Wi-Fi connect fail" while BLE is advertising/connected.
+# Heap functions moved to flash instead — recovers ~10 KB with no coex impact.
 CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y
 
 # ── mbedTLS extras required by Matter ────────────────────────────────────────
 # HKDF is used by CHIP crypto (CHIPCryptoPALmbedTLS) but disabled by default.
 CONFIG_MBEDTLS_HKDF_C=y
 
+# ── Main task stack ───────────────────────────────────────────────────────────
+# Default (3584) is too small once Matter's WiFi+BLE init runs on app_main's
+# stack during first-time setup.  8 KB gives comfortable headroom.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # ── Matter / CHIP ─────────────────────────────────────────────────────────────
+# Increase from the default 100 ms so CHIP's reconnect timer doesn't fire
+# while the WiFi coexistence module is still running its own reconnect policy
+# (which takes >100 ms to resolve BLE+WiFi radio contention on first-connect
+# during BLE commissioning).  1000 ms gives the coex layer enough headroom.
+CONFIG_WIFI_STATION_RECONNECT_INTERVAL=1000
+
 # Bluetooth for BLE commissioning (first-time pairing via Home app)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
@@ -59,9 +70,15 @@ CONFIG_BT_NIMBLE_ENABLED=y
 # Matter data model
 CONFIG_ESP_MATTER_ENABLE_DATA_MODEL=y
 
-# Do NOT let Matter manage WiFi — this project's Networking component does it.
-# Matter will use the existing WiFi connection for Matter-over-IP.
-CONFIG_CHIP_ENABLE_WIFI_STATION=n
+# Allow Matter's NetworkCommissioning cluster to manage WiFi during BLE
+# commissioning.  When Alexa/Google Home sends WiFi credentials via BLE,
+# the CHIP WiFi station driver applies them and calls esp_wifi_connect().
+# Networking::begin() with an empty SSID just watches for the resulting
+# IP event and starts SNTP — it does not conflict with Matter's WiFi driver.
+# For manually-entered WiFi credentials (non-Matter path), Networking::begin()
+# is called with the SSID and handles WiFi directly; Matter has no stored
+# credentials in that case and does not interfere.
+CONFIG_CHIP_ENABLE_WIFI_STATION=y
 
 # Read PIN and discriminator from NVS ("fctry" partition, "chip-factory" namespace)
 # instead of using the compile-time test constants (20202021 / 3840).

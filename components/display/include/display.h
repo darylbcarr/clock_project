@@ -110,6 +110,17 @@ public:
      */
     SemaphoreHandle_t getBusMutex() const { return m_bus_mutex; }
 
+    /**
+     * Render a single character inverted (white-on-black) at a specific
+     * page and column without redrawing the whole display.  Call after
+     * writeLines() / print() to overlay a cursor on the grid.
+     *
+     * @param page  Display page 0-7 (one page = 8 pixels high)
+     * @param col   Character column 0-15 (one column = 8 pixels wide)
+     * @param c     ASCII character to render
+     */
+    void render_char_inverted(int page, int col, char c);
+
     // Debug
     void debug_display_info();
 

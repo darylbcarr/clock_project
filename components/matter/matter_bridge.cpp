@@ -16,6 +16,8 @@
 #include "nvs.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
+#include "esp_wifi.h"
+#include "host/ble_gap.h"
 
 // ── Cluster and attribute ID constants ────────────────────────────────────────
 // ZCL / Matter cluster IDs
@@ -202,6 +204,35 @@ esp_err_t MatterBridge::start()
         return err;
     }
 
+    // ── Coex fix: clear stale WiFi credentials on uncommissioned device ───
+    // esp_wifi_set_config() persists the SSID/password in the WiFi driver's
+    // own NVS namespace.  A Matter factory-reset clears CHIP's commissioning
+    // data (chip-kvs) but NOT the WiFi driver NVS, so on every fresh
+    // commissioning attempt CHIP's ConnectivityManager calls
+    // esp_wifi_connect() at boot — while BLE is advertising — and the coex
+    // module fails the WiFi 4-way handshake ("Coexist: Wi-Fi connect fail")
+    // every ~5 s, looping indefinitely.
+    //
+    // If the device has no fabric yet, clear the WiFi config so
+    // IsWiFiStationProvisioned() returns false.  CHIP then stops retrying
+    // after the first coex-induced disconnect, giving BLE uncontested radio
+    // time during commissioning.  After AddNOC, CHIP receives fresh
+    // credentials and calls esp_wifi_connect() when BLE traffic has dropped
+    // to ~2.5 s cadence, allowing the handshake to complete.
+    //
+    // Devices that ARE already commissioned (FabricCount > 0) are left
+    // untouched so they reconnect to WiFi normally on reboot.
+    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+        wifi_config_t empty = {};
+        if (esp_wifi_set_config(WIFI_IF_STA, &empty) == ESP_OK) {
+            ESP_LOGI(TAG, "No fabric — cleared stale WiFi credentials (BLE coex fix)");
+        } else {
+            ESP_LOGW(TAG, "Failed to clear WiFi credentials");
+        }
+    } else {
+        ESP_LOGI(TAG, "Fabric present — keeping WiFi credentials for reconnect");
+    }
+
     // Force ColorMode to HS (0) so Alexa classifies both strips as Color Lights
     // and sends MoveToHueAndSaturation for colour commands.
     // NVS may persist an old CT (2) or XY (1) mode from a prior session.
@@ -350,8 +381,56 @@ void MatterBridge::event_cb(
             ESP_LOGD(TAG, "BLE connection established");
             break;
         case DeviceEventType::kCHIPoBLEConnectionClosed:
-            ESP_LOGD(TAG, "BLE connection closed");
+            ESP_LOGI(TAG, "BLE connection closed — resetting WiFi driver for reconnect");
+            // During BLE commissioning the coex module repeatedly fails the
+            // WiFi 4-way handshake ("Coexist: Wi-Fi connect fail") and leaves
+            // the driver in a pending-reconnect state where every subsequent
+            // esp_wifi_connect() call is rejected ("Haven't to connect").
+            // Now that BLE is closed the radio is free for WiFi, but the coex
+            // lock persists until the driver is fully restarted.
+            // esp_wifi_stop() clears all coex state.  esp_wifi_start() posts
+            // WIFI_EVENT_STA_START, which causes CHIP's event handler to call
+            // esp_wifi_connect() immediately on the clean driver.
+            {
+                wifi_ap_record_t ap = {};
+                if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+                    // WiFi not connected — restart the driver to clear coex lock
+                    esp_wifi_stop();
+                    esp_wifi_start();
+                }
+            }
             break;
+        case DeviceEventType::kCHIPoBLESubscribe: {
+            // Alexa has just subscribed to the CHIPoBLE TX characteristic —
+            // commissioning data exchange is about to begin.  Request longer
+            // BLE connection intervals so the coex module gives WiFi enough
+            // time to complete the WPA2 4-way handshake during ConnectNetwork.
+            //
+            // Matter spec (section 4.16.6) requires commissioners to accept
+            // connection parameter updates up to 100 ms interval, so Alexa
+            // should honour this request.  With 100 ms intervals the WiFi radio
+            // gets ~99 ms windows — sufficient for the entire 4-way handshake.
+            //
+            // itvl_min/max are in 1.25 ms units:
+            //   64  × 1.25 ms =  80 ms
+            //   80  × 1.25 ms = 100 ms
+            // supervision_timeout is in 10 ms units: 500 × 10 ms = 5 s.
+            uint16_t conId = event->CHIPoBLESubscribe.ConId;
+            struct ble_gap_upd_params params = {};
+            params.itvl_min          = 64;   //  80 ms
+            params.itvl_max          = 80;   // 100 ms
+            params.latency           = 0;
+            params.supervision_timeout = 500; //   5 s
+            params.min_ce_len        = 0;
+            params.max_ce_len        = 0;
+            int rc = ble_gap_update_params(conId, &params);
+            if (rc == 0) {
+                ESP_LOGI(TAG, "BLE subscribe — requested 80-100 ms intervals (conn %u)", conId);
+            } else {
+                ESP_LOGW(TAG, "BLE subscribe — ble_gap_update_params rc=%d (conn %u)", rc, conId);
+            }
+            break;
+        }
         case DeviceEventType::kCHIPoBLEConnectionError:
             ESP_LOGW(TAG, "BLE connection error");
             break;

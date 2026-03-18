@@ -48,11 +48,14 @@
 
 #include <cstdio>
 #include "esp_log.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
+#include "esp_wifi.h"
+#include "nvs.h"
 
 #include "clock_manager.h"
 #include "networking.h"
@@ -98,6 +101,8 @@ static WebServer     s_webserver(s_clock, s_net, s_leds);
 // All encoder I2C callers check this before touching hardware.
 static bool s_encoder_ok = false;
 
+static void clear_wifi_credentials();  // defined before app_main
+
 // ── dismiss_fn implementation ─────────────────────────────────────────────────
 // Called by Menu::wait_for_dismiss() at 50ms intervals.
 // Runs on the encoder_task stack — polls encoder hardware directly under
@@ -119,6 +124,47 @@ static Menu::InputEvent input_poll_fn()
         ev.enc_btn = s_encoder.button_pressed();
         xSemaphoreGive(mtx);
     }
+
+    // ── Panic WiFi reset during blocking setup screens ────────────────────
+    // encoder_task has not started yet when first_time_setup() is running,
+    // so panic detection must live here.
+    //
+    // Uses wall-clock time (tick count) so the 5 s threshold is accurate
+    // even when input_poll_fn is not called at a fixed rate — e.g. the
+    // 1.8 s hint delay in show_text_input, or the 500 ms debounce in the
+    // Matter pairing screen, both create gaps where no calls happen.
+    //
+    // Encoder button held 5 s OR A+B held 5 s → clear WiFi + restart.
+    static TickType_t s_panic_start = 0;   // tick when hold began; 0 = not held
+    static bool       s_panic_shown = false;
+
+    bool both     = ev.btnA && ev.btnB;
+    bool enc_held = ev.enc_btn && s_encoder_ok;
+    bool held     = enc_held || both;
+
+    if (held) {
+        if (s_panic_start == 0)
+            s_panic_start = xTaskGetTickCount();
+        uint32_t elapsed_ms = (xTaskGetTickCount() - s_panic_start) * portTICK_PERIOD_MS;
+        if (elapsed_ms >= 5000) {
+            s_display.clear();
+            s_display.print(0, "WiFi Reset!");
+            s_display.print(2, "Restarting...");
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            clear_wifi_credentials();
+            esp_restart();
+        } else if (elapsed_ms >= 3000 && !s_panic_shown) {
+            s_panic_shown = true;
+            s_display.clear();
+            s_display.print(0, "WiFi Reset?");
+            s_display.print(2, "Keep holding...");
+            s_display.print(4, "Release:cancel");
+        }
+    } else {
+        s_panic_start = 0;
+        s_panic_shown = false;
+    }
+
     return ev;
 }
 
@@ -137,6 +183,70 @@ static bool dismiss_fn()
     bool btn = s_encoder.button_pressed();
     xSemaphoreGive(mtx);
     return btn;
+}
+
+// ── Boot-time WiFi failure prompt ─────────────────────────────────────────────
+// Shown when stored credentials fail to connect within ~15 s on a returning
+// device.  Returns true if the user wants to reconfigure (holds A+B for 2 s),
+// or false to keep trying (single button press or 30 s timeout).
+static bool show_wifi_failed_prompt(const char* ssid)
+{
+    s_display.clear();
+    s_display.print(0, "WiFi not found!");
+    s_display.print(1, ssid);          // auto-truncated to 16 chars
+    s_display.print(2, "Reconfigure:");
+    s_display.print(3, " A+B 2s/enc 5s");
+    s_display.print(5, "Keep trying:");
+    s_display.print(6, " btn/enc/30s");
+
+    constexpr int      TIMEOUT_TICKS    = 30000 / 50;  // 30 s at 50 ms polls
+    constexpr uint32_t RECFG_HOLD_AB_MS = 2000;
+    constexpr uint32_t RECFG_HOLD_ENC_MS = 5000;
+
+    uint32_t both_hold_ms = 0;
+    uint32_t enc_hold_ms  = 0;
+    bool     enc_last     = false;
+
+    for (int tick = 0; tick < TIMEOUT_TICKS; tick++) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        bool btnA = (gpio_get_level(BUTTON_A) == 0);
+        bool btnB = (gpio_get_level(BUTTON_B) == 0);
+        bool both = btnA && btnB;
+
+        bool enc_btn = false;
+        if (s_encoder_ok) {
+            SemaphoreHandle_t mtx = s_display.getBusMutex();
+            xSemaphoreTake(mtx, portMAX_DELAY);
+            enc_btn = s_encoder.button_pressed();
+            xSemaphoreGive(mtx);
+        }
+
+        // A+B chord → reconfigure at 2 s
+        if (both) {
+            both_hold_ms += 50;
+            if (both_hold_ms >= RECFG_HOLD_AB_MS)
+                return true;
+        } else {
+            both_hold_ms = 0;
+            if (btnA || btnB)
+                return false;  // single hardware button → keep trying
+        }
+
+        // Encoder button: hold ≥ 5 s → reconfigure, release before → keep trying
+        if (enc_btn) {
+            enc_hold_ms += 50;
+            if (enc_hold_ms >= RECFG_HOLD_ENC_MS)
+                return true;
+        } else {
+            if (enc_last && enc_hold_ms < RECFG_HOLD_ENC_MS)
+                return false;  // released before 5 s → keep trying
+            enc_hold_ms = 0;
+        }
+        enc_last = enc_btn;
+    }
+
+    return false;  // 30 s timeout → keep trying
 }
 
 // ── Encoder poll task ─────────────────────────────────────────────────────────
@@ -159,6 +269,10 @@ static void encoder_task(void* /*arg*/)
     bool     btnB_long_fired  = false;
     bool     both_last        = false;
     int      h_scroll_counter = 0;
+    uint32_t panic_hold_ms    = 0;
+    bool     panic_shown      = false;
+    uint32_t enc_panic_ms     = 0;
+    bool     enc_panic_shown  = false;
 
     SemaphoreHandle_t mtx = s_display.getBusMutex();
 
@@ -184,6 +298,56 @@ static void encoder_task(void* /*arg*/)
         bool btnB_rise = (!btnB &&  btnB_last);
         bool both      = btnA && btnB;
         bool both_fall = both && !both_last;
+
+        // ── Panic WiFi reset (A+B held ≥ 5 s, works even when display blanked) ──
+        if (both) {
+            panic_hold_ms += 20;
+            if (panic_hold_ms >= 5000) {
+                s_display.clear();
+                s_display.print(0, "WiFi Reset!");
+                s_display.print(2, "Restarting...");
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                clear_wifi_credentials();
+                esp_restart();
+            } else if (panic_hold_ms >= 3000 && !panic_shown) {
+                panic_shown = true;
+                s_display.clear();
+                s_display.print(0, "WiFi Reset?");
+                s_display.print(2, "Keep holding...");
+                s_display.print(4, "Release:cancel");
+            }
+        } else {
+            if (panic_shown) {
+                panic_shown = false;
+                s_menu.render();
+            }
+            panic_hold_ms = 0;
+        }
+
+        // ── Panic WiFi reset — encoder button (held ≥ 5 s) ───────────────────
+        if (btn_now && s_encoder_ok) {
+            enc_panic_ms += 20;
+            if (enc_panic_ms >= 5000) {
+                s_display.clear();
+                s_display.print(0, "WiFi Reset!");
+                s_display.print(2, "Restarting...");
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                clear_wifi_credentials();
+                esp_restart();
+            } else if (enc_panic_ms >= 3000 && !enc_panic_shown) {
+                enc_panic_shown = true;
+                s_display.clear();
+                s_display.print(0, "WiFi Reset?");
+                s_display.print(2, "Keep holding...");
+                s_display.print(4, "Release:cancel");
+            }
+        } else {
+            if (enc_panic_shown) {
+                enc_panic_shown = false;
+                s_menu.render();
+            }
+            enc_panic_ms = 0;
+        }
 
         // ── Wake-up suppression ───────────────────────────────────────────────
         // Any input wakes the display; the triggering gesture is consumed.
@@ -246,17 +410,7 @@ static void encoder_task(void* /*arg*/)
                     }
                 }
             }
-            if (btnB && !btnB_long_fired) {
-                uint32_t held = (xTaskGetTickCount() - btnB_press_tick) * portTICK_PERIOD_MS;
-                if (held >= LONG_PRESS_MS) {
-                    btnB_long_fired = true;
-                    if (!s_menu.is_blanked()) {
-                        s_menu.select();
-                        s_menu.render();
-                        h_scroll_counter = 0;
-                    }
-                }
-            }
+            // B long press has no action (B is next-only; only A long = select)
             // ── Rising edges (release) → short press if no long press fired ──
             if (btnA_rise && !btnA_long_fired) {
                 s_menu.wake();
@@ -329,6 +483,47 @@ static void blank_timer_task(void* /*arg*/)
     }
 }
 
+// ── clear_matter_commissioning_data ───────────────────────────────────────────
+// Erases CHIP's fabric + config data from NVS so the next start() treats the
+// device as uncommissioned and enables BLE advertising for fresh pairing.
+// Preserves the unique discriminator stored in the separate "fctry" partition.
+static void clear_matter_commissioning_data()
+{
+    // "CHIP_KVS" is the KeyValueStoreManagerImpl namespace (uppercase, exact).
+    // "chip-config" holds factory/device-config keys in the default NVS partition.
+    const char* chip_ns[] = { "CHIP_KVS", "chip-config" };
+    for (const char* ns : chip_ns) {
+        nvs_handle_t h;
+        if (nvs_open(ns, NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_all(h);
+            nvs_commit(h);
+            nvs_close(h);
+        }
+    }
+    ESP_LOGI(TAG, "Cleared Matter commissioning data (CHIP_KVS, chip-config)");
+}
+
+// ── clear_wifi_credentials ────────────────────────────────────────────────────
+// Full factory reset: wipes WiFi credentials AND Matter commissioning data.
+//   1. App NVS (ConfigStore / clk_cfg namespace) — read by this firmware.
+//   2. WiFi driver NVS (esp_wifi_set_config)     — read by CHIP/Matter.
+//   3. CHIP commissioning data (chip-kvs, chip-config) — fabrics, ACLs, etc.
+// All three must be cleared; wiping only some leaves stale state that causes
+// CHIP to disable BLE advertising on the next boot.
+static void clear_wifi_credentials()
+{
+    NetCfg empty = {};
+    ConfigStore::load(empty);
+    empty.ssid[0]     = '\0';
+    empty.password[0] = '\0';
+    ConfigStore::save(empty);
+
+    wifi_config_t wcfg = {};
+    esp_wifi_set_config(WIFI_IF_STA, &wcfg);   // clears driver NVS copy
+
+    clear_matter_commissioning_data();
+}
+
 // ── app_main ──────────────────────────────────────────────────────────────────
 
 extern "C" void app_main()
@@ -376,16 +571,37 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "WiFi SSID: %s (source: %s)", wifi_ssid,
              netCfg.ssid[0] ? "NVS" : "default");
 
-    // ── 1. Display — inits I2C bus, exposes bus handle + mutex ───────────────
+    // ── 1a. Hardware buttons — configured FIRST so A+B failsafe is always live ─
+    // Must happen before any code that could fail or stall, so that the panic
+    // WiFi-reset (A+B held ≥ 5 s in encoder_task / input_poll_fn) works even
+    // when the display is absent.
+    {
+        const gpio_config_t btn_cfg = {
+            .pin_bit_mask = (1ULL << BUTTON_A) | (1ULL << BUTTON_B),
+            .mode         = GPIO_MODE_INPUT,
+            .pull_up_en   = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&btn_cfg);
+        ESP_LOGI(TAG, "Buttons: A=GPIO%d  B=GPIO%d  (configured early)", (int)BUTTON_A, (int)BUTTON_B);
+    }
+
+    // ── 1b. Display — inits I2C bus, exposes bus handle + mutex ──────────────
+    // Display::init() retries SSD1306 detection up to 3× internally.
+    // If the display is absent all s_display methods are no-ops, so boot
+    // continues normally — the clock, networking, and failsafe still work.
     ESP_LOGI(TAG, "Initialising display...");
     if (!s_display.init(I2C_NUM_0, 0x3C, (int)I2C_SDA, (int)I2C_SCL)) {
-        ESP_LOGE(TAG, "Display init failed — halting");
-        return;
+        ESP_LOGW(TAG, "Display not found — continuing headless (display ops are no-ops)");
+        // Do NOT halt: I2C bus handle is valid, encoder + buttons are already
+        // configured, and the A+B failsafe in encoder_task will work normally.
+    } else {
+        s_display.clear();
+        s_display.print(1, " Clock Driver");
+        s_display.print(2, " Initializing");
+        s_display.print(4, " Please wait...");
     }
-    s_display.clear();
-    s_display.print(1, " Clock Driver");
-    s_display.print(2, " Initializing");
-    s_display.print(4, " Please wait...");
 
     // ── 2. Encoder — shares Display's bus handle (same physical I2C bus) ─────
     // After the display writes above the I2C bus->status may be non-idle.
@@ -434,53 +650,85 @@ extern "C" void app_main()
         s_leds.set_effect(tgt, static_cast<LedManager::Effect>(ledCfg.strip[i].effect));
     }
 
-    // ── 2c. Hardware buttons (active-low, pull-up) ────────────────────────────
-    {
-        const gpio_config_t btn_cfg = {
-            .pin_bit_mask = (1ULL << BUTTON_A) | (1ULL << BUTTON_B),
-            .mode         = GPIO_MODE_INPUT,
-            .pull_up_en   = GPIO_PULLUP_ENABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type    = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&btn_cfg);
-        ESP_LOGI(TAG, "Buttons: A=GPIO%d (prev/long=select), B=GPIO%d (next/long=select), A+B=dismiss",
-                 (int)BUTTON_A, (int)BUTTON_B);
-    }
-
     // ── 3. Menu — wire dismiss, then build full tree ──────────────────────────
     // dismiss_fn polls the encoder directly (with mutex) so it works even
     // while encoder_task is blocked inside wait_for_dismiss.
     s_menu.set_dismiss_fn(dismiss_fn);
     s_menu.set_input_fn(input_poll_fn);
+    s_menu.set_encoder_ok(s_encoder_ok);
     ESP_LOGI(TAG, "Building menu...");
     s_menu.build(s_clock, s_net, s_leds);
 
-    // ── 4. Matter stack — start before networking so BLE commissioning and
-    //        WiFi connect can proceed concurrently ─────────────────────────────
-    s_matter.start();
-
-    // ── 4a. Populate Matter pairing info for the menu and first-run screen ────
-    {
+    // ── 4. Matter stack — init already done; populate pairing info before setup ─
+    // ensure_unique_discriminator() runs inside start(), so the real discriminator
+    // is only in NVS after start() completes.  We pre-populate with the NVS
+    // value here (may still be 3840 on first boot) and refresh after start().
+    auto refresh_matter_pairing_info = [&]() {
         auto info = s_matter.get_commissioning_info();
         s_menu.set_matter_pairing_info(info.pin_code, info.discriminator,
                                        s_matter.manual_code());
+    };
+    refresh_matter_pairing_info();
+
+    // ── 4b–4d. First-run setup loop ───────────────────────────────────────────
+    // Skipped when SSID is already stored or device is Matter-commissioned.
+    // Loops so the user can go back from the Matter pairing screen to the
+    // choice screen (encoder short press / single A or B on pairing screen).
+    // Matter is started at most once; the pairing screen stays until confirmed.
+    bool did_first_time_setup = false;
+    bool matter_started       = false;
+    if (netCfg.ssid[0] == '\0' && !s_matter.is_commissioned()) {
+        bool setup_done = false;
+
+        while (!setup_done) {
+            auto result = s_menu.first_time_setup();
+
+            if (result == Menu::SetupResult::WiFiSaved) {
+                ConfigStore::load(netCfg);
+                wifi_ssid = (netCfg.ssid[0] != '\0') ? netCfg.ssid : WIFI_SSID_DEFAULT;
+                wifi_pass = (netCfg.password[0] != '\0') ? netCfg.password : WIFI_PASSWORD_DEFAULT;
+                did_first_time_setup = true;
+                setup_done = true;
+
+            } else {
+                // MatterChosen — start Matter once, then show pairing screen.
+                // User can press back (enc short press / single A or B) to
+                // return to the choice screen.
+                if (!matter_started) {
+                    // Erase stale fabric data before start() so CHIP always
+                    // begins BLE advertising for fresh pairing.  Without this,
+                    // a prior commissioning (or old NVS from a previous flash)
+                    // causes CHIP to find FabricCount > 0, disable BLE
+                    // immediately, and print "Fabric already commissioned."
+                    clear_matter_commissioning_data();
+                    s_matter.start();
+                    matter_started = true;
+                    refresh_matter_pairing_info();  // discriminator now correct
+
+                    // Register networking event handlers and ensure WiFi STA is
+                    // started BEFORE the pairing screen blocks.  CHIP's BLE
+                    // commissioning flow sends WiFi credentials and immediately
+                    // tries to connect — if our event handlers are not registered
+                    // yet we miss the IP event, and if WiFi STA isn't explicitly
+                    // started we can hit "Haven't to connect to a suitable AP now!".
+                    s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
+                    if (tz_override[0] != '\0')
+                        s_net.set_timezone_override(tz_override);
+                    s_net.begin();   // subsequent call after the loop is a no-op
+                }
+                bool confirmed = s_menu.show_matter_pairing_standalone(
+                    [&]() { return s_matter.is_commissioned(); });
+                if (confirmed)
+                    setup_done = true;
+                // else: loop back to first_time_setup choice screen
+            }
+        }
     }
 
-    // ── 4b. First-run setup — block until the user chooses a WiFi path ────────
-    // Skip when:
-    //   (a) SSID is stored in our ConfigStore (manual WiFi path), OR
-    //   (b) the device already has a Matter fabric (previously commissioned —
-    //       CHIP reconnects to WiFi automatically using its own stored credentials).
-    if (netCfg.ssid[0] == '\0' && !s_matter.is_commissioned()) {
-        bool wifi_set = s_menu.first_time_setup();
-        if (wifi_set) {
-            // Reload credentials saved by the WiFi setup path
-            ConfigStore::load(netCfg);
-            wifi_ssid = (netCfg.ssid[0] != '\0') ? netCfg.ssid : WIFI_SSID_DEFAULT;
-            wifi_pass = (netCfg.password[0] != '\0') ? netCfg.password : WIFI_PASSWORD_DEFAULT;
-        }
-        // if !wifi_set: Matter path chosen — Networking skips connect, watches IP event
+    // ── 4c. Start Matter stack (returning / WiFi-path devices) ───────────────
+    if (!matter_started) {
+        s_matter.start();
+        refresh_matter_pairing_info();  // discriminator now correct
     }
 
     // ── 5. Networking — async WiFi + SNTP + geolocation ──────────────────────
@@ -489,6 +737,60 @@ extern "C" void app_main()
         s_net.set_timezone_override(tz_override);
     }
     s_net.begin();
+
+    // ── 5a. After first-time WiFi setup, verify connection succeeds ───────────
+    // If the entered credentials are wrong the user sees an error and the device
+    // restarts back into first-time setup automatically (NVS credentials are
+    // cleared before restarting so the setup screen shows again).
+    if (did_first_time_setup && wifi_ssid[0] != '\0') {
+        s_display.clear();
+        s_display.print(0, "Connecting...");
+        s_display.print(2, wifi_ssid);
+
+        bool connected = false;
+        for (int i = 0; i < 30 && !connected; i++) {   // up to 15 s
+            vTaskDelay(pdMS_TO_TICKS(500));
+            connected = s_net.is_connected();
+        }
+
+        if (!connected) {
+            s_display.clear();
+            s_display.print(0, "Connect failed!");
+            s_display.print(2, "Check SSID &");
+            s_display.print(3, "password.");
+            s_display.print(5, "Restarting...");
+            vTaskDelay(pdMS_TO_TICKS(3000));
+
+            clear_wifi_credentials();
+            esp_restart();
+        }
+    }
+
+    // ── 5b. For returning devices — verify WiFi connects within 15 s ─────────
+    // Only runs when credentials were already stored in NVS (not first-time
+    // setup, not Matter-only).  If connection fails, show a recovery prompt:
+    //   Hold A+B 2 s → clear NVS credentials and restart into first-time setup
+    //   Any single button or 30 s timeout → keep trying (continue to main menu)
+    if (!did_first_time_setup && wifi_ssid[0] != '\0') {
+        s_display.clear();
+        s_display.print(0, "Connecting...");
+        s_display.print(2, wifi_ssid);
+
+        bool connected = false;
+        for (int i = 0; i < 30 && !connected; i++) {   // up to 15 s
+            vTaskDelay(pdMS_TO_TICKS(500));
+            connected = s_net.is_connected();
+        }
+
+        if (!connected) {
+            bool reconfigure = show_wifi_failed_prompt(wifi_ssid);
+            if (reconfigure) {
+                clear_wifi_credentials();
+                esp_restart();
+            }
+            // else: user chose to keep trying — fall through to main menu
+        }
+    }
 
     // ── 4a. Web server — starts HTTP + WebSocket on port 80 ──────────────────
     s_webserver.start();
@@ -506,7 +808,7 @@ extern "C" void app_main()
     s_clock.start();
 
     // ── 7. Encoder poll task (priority 4) ─────────────────────────────────────
-    xTaskCreate(encoder_task,     "encoder_poll", 3072, nullptr, 4, nullptr);
+    xTaskCreate(encoder_task,     "encoder_poll", 4096, nullptr, 4, nullptr);
 
     // ── 8. Blank timer task (priority 2) ─────────────────────────────────────
     xTaskCreate(blank_timer_task, "blank_timer",  3072, nullptr, 2, nullptr);
@@ -514,9 +816,9 @@ extern "C" void app_main()
     // ── 9. Splash → menu ─────────────────────────────────────────────────────
     s_display.clear();
     s_display.print(0, " Clock Driver");
-    s_display.print(2, " Rotate: navigate");
-    s_display.print(3, " Press:  select");
-    s_display.print(4, " Hold:   back/select");
+    s_display.print(2, " Enc/A/B: navigate");
+    s_display.print(3, " Enc/LongA: select");
+    s_display.print(4, " EncLong/A+B: back");
     vTaskDelay(pdMS_TO_TICKS(2500));
 
     s_menu.render();

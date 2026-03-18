@@ -118,6 +118,8 @@ private:
     static constexpr int MAX_RETRY = 10;
     static constexpr int GEO_HTTP_TIMEOUT_MS = 10000;
 
+    bool begun_ = false;   // guards against double-call from Matter path
+
     // Module-static pointer so the SNTP callback (C linkage) can reach us
     static Networking* s_instance_;
 };

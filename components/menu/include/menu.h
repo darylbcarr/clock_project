@@ -86,6 +86,12 @@ public:
      */
     void set_input_fn(InputPollFn fn)  { input_poll_fn_  = fn; }
 
+    /**
+     * @brief Inform the menu whether a rotary encoder is present.
+     *        Affects the hint line shown on the Matter pairing screen.
+     */
+    void set_encoder_ok(bool ok)       { encoder_ok_     = ok; }
+
     // ── Navigation ────────────────────────────────────────────────────────────
     void next();
     void previous();
@@ -136,7 +142,25 @@ public:
      *
      * Call set_matter_pairing_info() before this to populate the Matter screen.
      */
-    bool first_time_setup();
+    enum class SetupResult { WiFiSaved, MatterChosen, Pending };
+
+    /**
+     * Runs the first-time setup choice screen and (if WiFi chosen) the SSID/
+     * password entry.  Returns:
+     *   WiFiSaved    — credentials saved to NVS; reload NetCfg.
+     *   MatterChosen — user selected Matter; caller must start Matter stack
+     *                  and then call show_matter_pairing_screen_standalone().
+     *   Pending      — should not occur (loop never exits without a choice).
+     */
+    SetupResult first_time_setup();
+
+    /**
+     * Shows the Matter pairing screen and blocks until:
+     *   - commissioned_fn() returns true  → returns true  (proceed to main menu)
+     *   - user presses back               → returns false (return to choice screen)
+     * Call this from app_main after starting the Matter stack.
+     */
+    bool show_matter_pairing_standalone(std::function<bool()> commissioned_fn = nullptr);
 
     // ── Display blanking ──────────────────────────────────────────────────────
     /**
@@ -164,6 +188,7 @@ private:
     size_t                      display_start_     = 0;
     DismissFn                   dismiss_fn_        = nullptr;
     InputPollFn                 input_poll_fn_     = nullptr;
+    bool                        encoder_ok_        = false;
 
     // Matter commissioning info (set via set_matter_pairing_info())
     uint32_t    matter_pin_  = 0;

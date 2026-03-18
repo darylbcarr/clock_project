@@ -278,9 +278,14 @@ void ClockManager::cmd_set_time(int obs_hour, int obs_min)
     int current_12h = displayed_hour_  * 60 + displayed_minute_;
     int delta       = (target_12h - current_12h + 720) % 720;
 
-    ESP_LOGI(TAG, "cmd_set_time: current=%02d:%02d  target=%02d:%02d  delta=%d min",
+    // If the forward distance is more than 6 hours (360 min on a 12-h face),
+    // the backward path is shorter — negate delta to drive the motor in reverse.
+    if (delta > 360) delta -= 720;
+
+    ESP_LOGI(TAG, "cmd_set_time: current=%02d:%02d  target=%02d:%02d  delta=%d min (%s)",
              displayed_hour_, displayed_minute_,
-             t.tm_hour % 12, t.tm_min, delta);
+             t.tm_hour % 12, t.tm_min, delta,
+             delta < 0 ? "backward" : "forward");
 
     if (delta == 0) {
         ESP_LOGI(TAG, "Hand already at correct position");

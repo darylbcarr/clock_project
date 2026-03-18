@@ -1,5 +1,6 @@
 #include "display.h"
 #include "esp_log.h"
+#include "font_latin_8x8.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -62,9 +63,19 @@ bool Display::init(i2c_port_t port, uint8_t addr, int sda_pin, int scl_pin) {
         .display_enabled = true
     };
 
-    ret = ssd1306_init(m_bus_handle, &ssd1306_config, &m_dev);
+    // Retry SSD1306 init: the display may need a moment after power-on to
+    // respond.  Three attempts with 300 ms gaps covers most cold-start races.
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        if (attempt > 1) {
+            ESP_LOGW(TAG, "SSD1306 init retry %d/3...", attempt);
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
+        ret = ssd1306_init(m_bus_handle, &ssd1306_config, &m_dev);
+        if (ret == ESP_OK) break;
+        ESP_LOGW(TAG, "SSD1306 init attempt %d failed: %s", attempt, esp_err_to_name(ret));
+    }
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SSD1306 init failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "SSD1306 init failed after 3 attempts: %s", esp_err_to_name(ret));
         return false;
     }
 
@@ -326,6 +337,20 @@ void Display::stopHardwareScroll() {
     m_hardware_scrolling = false;
     vTaskDelay(pdMS_TO_TICKS(10));
     refresh_display();
+}
+
+void Display::render_char_inverted(int page, int col, char c)
+{
+    if (!m_initialized || m_dev == nullptr) return;
+    if (page < 0 || page >= 8 || col < 0 || col >= 16) return;
+
+    uint8_t inv[8];
+    const uint8_t *src = font_latin_8x8_tr[(uint8_t)(unsigned char)c];
+    for (int i = 0; i < 8; i++) inv[i] = src[i] ^ 0xFF;
+
+    xSemaphoreTake(m_bus_mutex, portMAX_DELAY);
+    ssd1306_display_image(m_dev, (uint8_t)page, (uint8_t)(col * 8), inv, 8);
+    xSemaphoreGive(m_bus_mutex);
 }
 
 void Display::debug_display_info() {

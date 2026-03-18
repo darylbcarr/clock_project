@@ -13,8 +13,11 @@
 #include "driver/uart.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "config_store.h"
+#include "esp_wifi.h"
 
 static const char* TAG = "console";
 
@@ -112,6 +115,7 @@ static void do_help()
         "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  matter-pair             Reopen BLE commissioning window (fast advertising)\r\n"
+        "  clear-wifi              Erase stored WiFi credentials and restart\r\n"
         "  help                    Show this list\r\n"
     );
 }
@@ -308,6 +312,21 @@ static void dispatch(char* line)
             uart_puts("Device already commissioned; remove it from Alexa first.\r\n");
         else
             uart_puts("Failed to open commissioning window (check log).\r\n");
+        return;
+    }
+    if (strcmp(cmd, "clear-wifi") == 0) {
+        // Clear both app NVS (ConfigStore) and WiFi driver NVS.
+        // Wiping only one leaves the other copy to reconnect on reboot.
+        NetCfg cfg = {};
+        ConfigStore::load(cfg);
+        cfg.ssid[0]     = '\0';
+        cfg.password[0] = '\0';
+        ConfigStore::save(cfg);
+        wifi_config_t wcfg = {};
+        esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+        uart_puts("WiFi credentials cleared. Restarting...\r\n");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
         return;
     }
     if (strcmp(cmd, "help") == 0) {

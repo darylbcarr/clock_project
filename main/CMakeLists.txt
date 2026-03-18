@@ -19,6 +19,7 @@ idf_component_register(
         freertos
         log
         nvs_flash
+        esp_wifi
 )
 
 set(CMAKE_CXX_STANDARD 17)
