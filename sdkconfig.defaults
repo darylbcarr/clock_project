@@ -34,7 +34,13 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
 # OTA support — required for ota_0/ota_1 partition scheme
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+# Rollback: if the new firmware doesn't call esp_ota_mark_app_valid_cancel_rollback()
+# before rebooting, the bootloader reverts to the previous slot automatically.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# CA certificate bundle — required for HTTPS to GitHub (TLS cert verification)
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 
 # WebSocket support for the HTTP server
 CONFIG_HTTPD_WS_SUPPORT=y

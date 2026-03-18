@@ -67,6 +67,8 @@
 #include "led_manager.h"
 #include "config_store.h"
 #include "matter_bridge.h"
+#include "ota_manager.h"
+#include "esp_ota_ops.h"
 
 static const char* TAG = "main";
 
@@ -96,6 +98,7 @@ static Menu          s_menu(s_display);
 static LedManager    s_leds(GPIO_NUM_1, GPIO_NUM_2, 30);
 static MatterBridge  s_matter(s_leds);
 static WebServer     s_webserver(s_clock, s_net, s_leds);
+static OtaManager    s_ota;
 
 // Set true only after seesaw.begin() AND encoder.init() both succeed.
 // All encoder I2C callers check this before touching hardware.
@@ -529,8 +532,15 @@ static void clear_wifi_credentials()
 extern "C" void app_main()
 {
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
-    ESP_LOGI(TAG, "  Analog Clock Driver  — ESP32-S3");
+    ESP_LOGI(TAG, "  Analog Clock Driver  — ESP32-S3  v%s", OtaManager::running_version());
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
+
+    // ── OTA rollback guard ────────────────────────────────────────────────────
+    // If rollback is enabled (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y), the
+    // bootloader marks a freshly-flashed OTA image as "pending verify".
+    // Calling this confirms the new firmware is good; without it a subsequent
+    // reboot would roll back to the previous slot.
+    esp_ota_mark_app_valid_cancel_rollback();
 
     // ── 0. NVS flash init (must be first; Networking::begin() reuses it) ─────
     {
@@ -795,10 +805,14 @@ extern "C" void app_main()
     // ── 4a. Web server — starts HTTP + WebSocket on port 80 ──────────────────
     s_webserver.start();
 
+    // ── 4b. OTA update checker — background task, waits for WiFi then polls ──
+    s_ota.start(s_display, [&]() { return s_net.is_connected(); });
+
     // ── 5. UART console ───────────────────────────────────────────────────────
     console_start(&s_clock, &s_net,
                   s_encoder_ok ? &s_encoder : nullptr,
                   &s_matter,
+                  &s_ota,
                   s_display.getBusMutex(),
                   s_display.getBusHandle());
 

@@ -20,6 +20,8 @@ idf_component_register(
         log
         nvs_flash
         esp_wifi
+        ota_manager
+        app_update
 )
 
 set(CMAKE_CXX_STANDARD 17)

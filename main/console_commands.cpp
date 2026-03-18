@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "config_store.h"
 #include "esp_wifi.h"
+#include "ota_manager.h"
 
 static const char* TAG = "console";
 
@@ -32,6 +33,7 @@ static ClockManager*           s_clock      = nullptr;
 static Networking*             s_net        = nullptr;
 static RotaryEncoder*          s_encoder    = nullptr;
 static MatterBridge*           s_matter     = nullptr;
+static OtaManager*             s_ota        = nullptr;
 static SemaphoreHandle_t       s_bus_mutex  = nullptr;
 static i2c_master_bus_handle_t s_bus_handle = nullptr;
 
@@ -115,6 +117,7 @@ static void do_help()
         "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  matter-pair             Reopen BLE commissioning window (fast advertising)\r\n"
+        "  check-ota               Check GitHub for a firmware update now\r\n"
         "  clear-wifi              Erase stored WiFi credentials and restart\r\n"
         "  help                    Show this list\r\n"
     );
@@ -314,6 +317,19 @@ static void dispatch(char* line)
             uart_puts("Failed to open commissioning window (check log).\r\n");
         return;
     }
+    if (strcmp(cmd, "check-ota") == 0) {
+        if (!s_ota) { uart_puts("OTA not available.\r\n"); return; }
+        uart_printf("Running v%s  — checking for updates...\r\n",
+                    OtaManager::running_version());
+        esp_err_t e = s_ota->check_now();
+        if (e == ESP_ERR_INVALID_STATE)
+            uart_puts("WiFi not connected.\r\n");
+        else if (e != ESP_OK)
+            uart_printf("OTA check failed: %s\r\n", esp_err_to_name(e));
+        // On success the device either restarted (update applied) or logged
+        // "Firmware is up to date" — no extra message needed here.
+        return;
+    }
     if (strcmp(cmd, "clear-wifi") == 0) {
         // Clear both app NVS (ConfigStore) and WiFi driver NVS.
         // Wiping only one leaves the other copy to reconnect on reboot.
@@ -357,6 +373,7 @@ void console_start(ClockManager*           clock_mgr,
                    Networking*             net,
                    RotaryEncoder*          encoder,
                    MatterBridge*           matter,
+                   OtaManager*             ota,
                    SemaphoreHandle_t       bus_mutex,
                    i2c_master_bus_handle_t bus_handle)
 {
@@ -364,6 +381,7 @@ void console_start(ClockManager*           clock_mgr,
     s_net        = net;
     s_encoder    = encoder;
     s_matter     = matter;
+    s_ota        = ota;
     s_bus_mutex  = bus_mutex;
     s_bus_handle = bus_handle;
 

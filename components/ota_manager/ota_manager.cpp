@@ -1,0 +1,198 @@
+/**
+ * @file ota_manager.cpp
+ * @brief OTA firmware update — polls GitHub version.json, downloads via HTTPS.
+ */
+
+#include "ota_manager.h"
+#include "display.h"
+
+#include <cstring>
+#include <cstdio>
+#include "esp_log.h"
+#include "esp_app_desc.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
+#include "esp_crt_bundle.h"
+#include "esp_ota_ops.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "cJSON.h"
+
+static const char* TAG = "ota";
+
+// ── Public: running version ───────────────────────────────────────────────────
+
+const char* OtaManager::running_version()
+{
+    return esp_app_get_description()->version;
+}
+
+// ── Public: start background task ─────────────────────────────────────────────
+
+void OtaManager::start(Display& display, std::function<bool()> is_connected_fn)
+{
+    display_         = &display;
+    is_connected_fn_ = is_connected_fn;
+    xTaskCreate(ota_task, "ota_check", 8192, this, 2, nullptr);
+    ESP_LOGI(TAG, "OTA task started  (running v%s)", running_version());
+}
+
+// ── Public: manual check ──────────────────────────────────────────────────────
+
+esp_err_t OtaManager::check_now()
+{
+    if (!is_connected_fn_ || !is_connected_fn_()) {
+        ESP_LOGW(TAG, "check_now: WiFi not connected");
+        return ESP_ERR_INVALID_STATE;
+    }
+    return do_check_and_update();
+}
+
+// ── Background task ───────────────────────────────────────────────────────────
+
+void OtaManager::ota_task(void* arg)
+{
+    auto* self = static_cast<OtaManager*>(arg);
+
+    // Wait for WiFi — poll every 5 s, give up waiting after BOOT_DELAY_S and
+    // try anyway (the HTTP client will fail gracefully if not connected).
+    int waited = 0;
+    while (waited < BOOT_DELAY_S && self->is_connected_fn_ &&
+           !self->is_connected_fn_()) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        waited += 5;
+    }
+
+    while (true) {
+        self->do_check_and_update();
+        vTaskDelay(pdMS_TO_TICKS((uint32_t)CHECK_INTERVAL_S * 1000));
+    }
+}
+
+// ── Version fetch ─────────────────────────────────────────────────────────────
+
+bool OtaManager::fetch_version_info(char* out_ver, size_t ver_len,
+                                    char* out_url, size_t url_len)
+{
+    // Allocate HTTP receive buffer on the heap — version.json is tiny.
+    static constexpr int BUF = 512;
+    char* buf = static_cast<char*>(malloc(BUF));
+    if (!buf) return false;
+    memset(buf, 0, BUF);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url                = VERSION_CHECK_URL;
+    cfg.timeout_ms         = HTTP_TIMEOUT_MS;
+    cfg.method             = HTTP_METHOD_GET;
+    cfg.crt_bundle_attach  = esp_crt_bundle_attach;  // validates GitHub's TLS cert
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) { free(buf); return false; }
+
+    bool ok = false;
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        int n = esp_http_client_read(client, buf, BUF - 1);
+        buf[n > 0 ? n : 0] = '\0';
+
+        int status = esp_http_client_get_status_code(client);
+        if (status == 200 && n > 0) {
+            cJSON* root = cJSON_Parse(buf);
+            if (root) {
+                cJSON* ver = cJSON_GetObjectItemCaseSensitive(root, "version");
+                cJSON* url = cJSON_GetObjectItemCaseSensitive(root, "url");
+                if (cJSON_IsString(ver) && cJSON_IsString(url)) {
+                    strncpy(out_ver, ver->valuestring, ver_len - 1);
+                    strncpy(out_url, url->valuestring, url_len - 1);
+                    ok = true;
+                }
+                cJSON_Delete(root);
+            } else {
+                ESP_LOGE(TAG, "version.json parse failed");
+            }
+        } else {
+            ESP_LOGE(TAG, "version.json HTTP %d", status);
+        }
+    } else {
+        ESP_LOGE(TAG, "version.json fetch failed (no network?)");
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    free(buf);
+    return ok;
+}
+
+// ── Check & update ────────────────────────────────────────────────────────────
+
+esp_err_t OtaManager::do_check_and_update()
+{
+    char new_ver[VER_BUF_LEN] = {};
+    char bin_url[URL_BUF_LEN] = {};
+
+    ESP_LOGI(TAG, "Checking for updates (running v%s)...", running_version());
+
+    if (!fetch_version_info(new_ver, sizeof(new_ver), bin_url, sizeof(bin_url))) {
+        ESP_LOGW(TAG, "Version check failed — will retry next cycle");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Latest: v%s  Running: v%s", new_ver, running_version());
+
+    if (strcmp(new_ver, running_version()) == 0) {
+        ESP_LOGI(TAG, "Firmware is up to date");
+        return ESP_OK;
+    }
+
+    // ── New version available — show on display and download ──────────────────
+    ESP_LOGI(TAG, "Update available: v%s → v%s", running_version(), new_ver);
+
+    if (display_) {
+        display_->clear();
+        display_->print(0, "  OTA Update   ");
+        // Show old → new; use a large buffer, display truncates to 16 chars
+        char line[80];
+        snprintf(line, sizeof(line), "v%s->v%s", running_version(), new_ver);
+        display_->print(2, line);
+        display_->print(4, "Downloading...");
+        display_->print(6, "Do not power off");
+    }
+
+    // ── esp_https_ota download ────────────────────────────────────────────────
+    esp_http_client_config_t http_cfg = {};
+    http_cfg.url               = bin_url;
+    http_cfg.timeout_ms        = 60000;   // large binary — generous timeout
+    http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    http_cfg.keep_alive_enable = true;
+
+    esp_https_ota_config_t ota_cfg = {};
+    ota_cfg.http_config = &http_cfg;
+
+    esp_err_t ret = esp_https_ota(&ota_cfg);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "OTA download complete — restarting");
+        if (display_) {
+            display_->clear();
+            display_->print(0, "  OTA Complete  ");
+            display_->print(3, "  Restarting... ");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        esp_restart();
+    } else {
+        ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
+        if (display_) {
+            display_->clear();
+            display_->print(0, "  OTA Failed    ");
+            display_->print(2, esp_err_to_name(ret));
+            display_->print(5, "Still on:");
+            char ver_line[20];
+            snprintf(ver_line, sizeof(ver_line), "  v%s", running_version());
+            display_->print(6, ver_line);
+            vTaskDelay(pdMS_TO_TICKS(4000));
+            display_->clear();
+        }
+    }
+
+    return ret;
+}

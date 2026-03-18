@@ -26,6 +26,7 @@
 #include "networking.h"
 #include "encoder.h"
 #include "matter_bridge.h"
+#include "ota_manager.h"
 #include "driver/i2c_master.h"
 #include "freertos/semphr.h"
 
@@ -35,6 +36,7 @@
  * @param net         Pointer to the shared Networking instance.
  * @param encoder     Pointer to the shared RotaryEncoder (for enc-test).
  * @param matter      Pointer to the shared MatterBridge.
+ * @param ota         Pointer to the shared OtaManager.
  * @param bus_mutex   The I2C bus mutex owned by Display.
  * @param bus_handle  The I2C master bus handle (for i2c-scan).
  */
@@ -42,5 +44,6 @@ void console_start(ClockManager*           clock_mgr,
                    Networking*             net,
                    RotaryEncoder*          encoder,
                    MatterBridge*           matter,
+                   OtaManager*             ota,
                    SemaphoreHandle_t       bus_mutex,
                    i2c_master_bus_handle_t bus_handle);
