@@ -15,4 +15,5 @@ idf_component_register(
         lwip
         log
         json
+        mdns
 )

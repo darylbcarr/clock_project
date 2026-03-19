@@ -113,9 +113,10 @@ bool ConfigStore::save(const NetCfg& c)
 {
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    nvs_set_str(h, "net_ssid", c.ssid);
-    nvs_set_str(h, "net_pass", c.password);
-    nvs_set_str(h, "net_tz",   c.tz_override);
+    nvs_set_str(h, "net_ssid",  c.ssid);
+    nvs_set_str(h, "net_pass",  c.password);
+    nvs_set_str(h, "net_tz",    c.tz_override);
+    nvs_set_str(h, "net_mdns",  c.mdns_hostname);
     bool ok = (nvs_commit(h) == ESP_OK);
     nvs_close(h);
     return ok;
@@ -126,9 +127,10 @@ bool ConfigStore::load(NetCfg& c)
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return false;
     size_t len;
-    len = sizeof(c.ssid);        nvs_get_str(h, "net_ssid", c.ssid,        &len);
-    len = sizeof(c.password);    nvs_get_str(h, "net_pass", c.password,    &len);
-    len = sizeof(c.tz_override); nvs_get_str(h, "net_tz",   c.tz_override, &len);
+    len = sizeof(c.ssid);           nvs_get_str(h, "net_ssid",  c.ssid,           &len);
+    len = sizeof(c.password);       nvs_get_str(h, "net_pass",  c.password,       &len);
+    len = sizeof(c.tz_override);    nvs_get_str(h, "net_tz",    c.tz_override,    &len);
+    len = sizeof(c.mdns_hostname);  nvs_get_str(h, "net_mdns",  c.mdns_hostname,  &len);
     nvs_close(h);
     return true;
 }

@@ -350,18 +350,21 @@ void Menu::show_net_status(Networking &net)
     display_.print(0, center_str("Net Status").c_str());
     if (s.wifi_connected)
     {
+        int row = 1;
         snprintf(buf, sizeof(buf), "%.14s", s.ssid);
-        display_.print(1, buf);
-        snprintf(buf, sizeof(buf), "RSSI:%ddBm", (int)s.rssi);
-        display_.print(2, buf);
+        display_.print(row++, buf);
+        if (s.mdns_hostname[0] != '\0') {
+            snprintf(buf, sizeof(buf), "DNS:%.11s", s.mdns_hostname);
+            display_.print(row++, buf);
+        }
         snprintf(buf, sizeof(buf), "%.15s", s.local_ip);
-        display_.print(3, buf);
+        display_.print(row++, buf);
         snprintf(buf, sizeof(buf), "%.15s", s.external_ip);
-        display_.print(4, buf);
+        display_.print(row++, buf);
         snprintf(buf, sizeof(buf), "%.16s", s.city);
-        display_.print(5, buf);
+        display_.print(row++, buf);
         snprintf(buf, sizeof(buf), "%.16s", s.iana_tz);
-        display_.print(6, buf);
+        display_.print(row++, buf);
     }
     else
     {

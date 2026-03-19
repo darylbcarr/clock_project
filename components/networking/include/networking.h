@@ -59,6 +59,9 @@ struct NetStatus {
     char        iana_tz[64]     = {};   // e.g. "America/Chicago"
     char        posix_tz[80]    = {};   // e.g. "CST6CDT,M3.2.0,M11.1.0"
     bool        sntp_synced     = false;
+
+    // mDNS
+    char        mdns_hostname[32] = {}; // e.g. "clock_a1b2"
 };
 
 // ── Networking class ──────────────────────────────────────────────────────────
@@ -76,6 +79,12 @@ public:
      */
     void set_timezone_override(const char* tz);
 
+    /**
+     * @brief Override the default MAC-derived mDNS hostname before begin().
+     *        e.g. "clock_a1b2" → accessible at clock_a1b2.local
+     */
+    void set_mdns_hostname_hint(const char* name);
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     void begin();
 
@@ -83,6 +92,22 @@ public:
     const NetStatus& get_status() const { return status_; }
     bool is_connected()   const { return status_.wifi_connected; }
     bool is_time_synced() const { return status_.sntp_synced; }
+
+    /**
+     * @brief Tell Networking whether the device is already Matter-commissioned.
+     *        Call before begin().  When true, mDNS is allowed to start even on
+     *        the Matter WiFi path (BLE is inactive on reboot after commissioning).
+     *        When false (first-time commissioning, BLE still active), mDNS is
+     *        suppressed to prevent packet-buffer conflict with CHIP's mDNS stack.
+     */
+    void set_matter_commissioned(bool commissioned) { matter_commissioned_ = commissioned; }
+
+    /**
+     * @brief Live-update the mDNS hostname after begin() — no restart needed.
+     *        Sends goodbye for old name and announces the new one immediately.
+     *        Persistence is the caller's responsibility (save to NetCfg/ConfigStore).
+     */
+    void set_mdns_hostname(const char* name);
 
 private:
     // ── Event handlers (static trampoline → instance method) ─────────────────
@@ -98,27 +123,31 @@ private:
 
     // ── Internal helpers ──────────────────────────────────────────────────────
     void start_sntp();
+    void start_mdns();
     void do_geolocation();          // runs in a short-lived task
     bool fetch_geolocation();       // HTTP GET ip-api.com, parse JSON
     void apply_timezone(const char* iana_tz);
     void refresh_rssi();
     void populate_dns();
 
-    static void geo_task(void* arg); // FreeRTOS task wrapper for do_geolocation
+    static void geo_task(void* arg);  // FreeRTOS task wrapper for do_geolocation
+    static void mdns_task(void* arg); // FreeRTOS task wrapper for start_mdns
 
     // ── State ─────────────────────────────────────────────────────────────────
     ClockManager&   clock_mgr_;
-    esp_netif_t*    netif_         = nullptr;
-    NetStatus       status_        = {};
-    char            ssid_[33]      = {};
-    char            password_[65]  = {};
-    char            tz_override_[80] = {};
-    int             retry_count_   = 0;
+    esp_netif_t*    netif_              = nullptr;
+    NetStatus       status_             = {};
+    char            ssid_[33]           = {};
+    char            password_[65]       = {};
+    char            tz_override_[80]    = {};
+    char            mdns_hostname_hint_[32] = {};
+    int             retry_count_        = 0;
 
     static constexpr int MAX_RETRY = 10;
     static constexpr int GEO_HTTP_TIMEOUT_MS = 10000;
 
-    bool begun_ = false;   // guards against double-call from Matter path
+    bool begun_               = false;  // guards against double-call from Matter path
+    bool matter_commissioned_ = false;  // set by main before begin(); enables mDNS on Matter path
 
     // Module-static pointer so the SNTP callback (C linkage) can reach us
     static Networking* s_instance_;

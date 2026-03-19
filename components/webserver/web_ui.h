@@ -568,6 +568,21 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
+  <!-- Device Hostname (mDNS) -->
+  <div class="card">
+    <div class="card-title">Device Hostname</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Access this device at <span id="cfg-mdns-display" style="color:var(--a);font-family:monospace;">clock_xxxx.local</span>.
+      Changes take effect immediately &mdash; no restart required.
+    </p>
+    <div class="cfg-row">
+      <input type="text" id="cfg-mdns" placeholder="clock_xxxx" autocomplete="off"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:13px;font-family:monospace;">
+      <button class="btn btn-secondary btn-sm" onclick="saveMdnsHostname()">Save</button>
+    </div>
+  </div>
+
   <!-- Firmware Update -->
   <div class="card">
     <div class="card-title">Firmware Update</div>
@@ -866,6 +881,14 @@ function saveTz() {
   const tz = document.getElementById('cfg-tz').value.trim();
   postCfg({tz_override: tz}).then(() => toast('Timezone saved — restart to apply'));
 }
+function saveMdnsHostname() {
+  const name = document.getElementById('cfg-mdns').value.trim();
+  if (!name) return;
+  postCfg({mdns_hostname: name}).then(() => {
+    setText('cfg-mdns-display', name + '.local');
+    toast('Hostname updated \u2014 now reachable at ' + name + '.local');
+  });
+}
 
 // ── Data application ─────────────────────────────────────────────────────────
 function setText(id, val) {
@@ -911,6 +934,13 @@ function applyData(d) {
 
   // Info section
   setText('inf-fw', d.fw_version ? 'v' + d.fw_version : '—');
+
+  // mDNS hostname — populate once on first data; don't overwrite user edits
+  if (d.mdns_hostname && !applyData.mdnsDone) {
+    applyData.mdnsDone = true;
+    document.getElementById('cfg-mdns').value = d.mdns_hostname;
+    setText('cfg-mdns-display', d.mdns_hostname + '.local');
+  }
 
   // OTA section
   if (d.ota_running !== undefined) setText('ota-running', 'v' + d.ota_running);

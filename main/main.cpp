@@ -106,6 +106,20 @@ static bool s_encoder_ok = false;
 
 static void clear_wifi_credentials();  // defined before app_main
 
+// ── is_matter_commissioned_quick ──────────────────────────────────────────────
+// Returns true if CHIP has fabric data in NVS, WITHOUT starting the Matter
+// stack.  chip::Server::GetInstance().GetFabricTable().FabricCount() only works
+// after esp_matter::start(), so we can't use it at the pre-start boot check.
+// CHIP_KVS is empty on a fresh/factory-reset device and gains entries after the
+// first successful commissioning — it's a reliable proxy for FabricCount > 0.
+static bool is_matter_commissioned_quick()
+{
+    nvs_iterator_t it  = nullptr;
+    esp_err_t      err = nvs_entry_find("nvs", "CHIP_KVS", NVS_TYPE_ANY, &it);
+    if (it) nvs_release_iterator(it);
+    return (err == ESP_OK);   // ESP_OK → at least one entry found
+}
+
 // ── dismiss_fn implementation ─────────────────────────────────────────────────
 // Called by Menu::wait_for_dismiss() at 50ms intervals.
 // Runs on the encoder_task stack — polls encoder hardware directly under
@@ -681,14 +695,32 @@ extern "C" void app_main()
     };
     refresh_matter_pairing_info();
 
-    // ── 4b–4d. First-run setup loop ───────────────────────────────────────────
+    // ── 4b. UART console — start early so it's available during setup screens ──
+    // Networking and OTA are not yet started; pointers are valid but commands
+    // that need connectivity will return "not available" / "WiFi not connected"
+    // until the setup flow completes and networking begins.
+    console_start(&s_clock, &s_net,
+                  s_encoder_ok ? &s_encoder : nullptr,
+                  &s_matter,
+                  &s_ota,
+                  s_display.getBusMutex(),
+                  s_display.getBusHandle());
+
+    // ── 4c–4e. First-run setup loop ───────────────────────────────────────────
     // Skipped when SSID is already stored or device is Matter-commissioned.
     // Loops so the user can go back from the Matter pairing screen to the
     // choice screen (encoder short press / single A or B on pairing screen).
     // Matter is started at most once; the pairing screen stays until confirmed.
+    // Check NVS before starting the Matter stack.  Passed to Networking so it
+    // can decide whether mDNS is safe to start on the Matter WiFi path:
+    //   false → first-time commissioning, BLE is active → suppress mDNS
+    //   true  → returning device, BLE is inactive on this boot → allow mDNS
+    const bool matter_commissioned = is_matter_commissioned_quick();
+    s_net.set_matter_commissioned(matter_commissioned);
+
     bool did_first_time_setup = false;
     bool matter_started       = false;
-    if (netCfg.ssid[0] == '\0' && !s_matter.is_commissioned()) {
+    if (netCfg.ssid[0] == '\0' && !matter_commissioned) {
         bool setup_done = false;
 
         while (!setup_done) {
@@ -725,6 +757,8 @@ extern "C" void app_main()
                     s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
                     if (tz_override[0] != '\0')
                         s_net.set_timezone_override(tz_override);
+                    if (netCfg.mdns_hostname[0] != '\0')
+                        s_net.set_mdns_hostname_hint(netCfg.mdns_hostname);
                     s_net.begin();   // subsequent call after the loop is a no-op
                 }
                 bool confirmed = s_menu.show_matter_pairing_standalone(
@@ -746,6 +780,9 @@ extern "C" void app_main()
     s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
     if (tz_override[0] != '\0') {
         s_net.set_timezone_override(tz_override);
+    }
+    if (netCfg.mdns_hostname[0] != '\0') {
+        s_net.set_mdns_hostname_hint(netCfg.mdns_hostname);
     }
     s_net.begin();
 
@@ -809,14 +846,6 @@ extern "C" void app_main()
 
     // ── 4b. OTA update checker — background task, waits for WiFi then polls ──
     s_ota.start(s_display, [&]() { return s_net.is_connected(); });
-
-    // ── 5. UART console ───────────────────────────────────────────────────────
-    console_start(&s_clock, &s_net,
-                  s_encoder_ok ? &s_encoder : nullptr,
-                  &s_matter,
-                  &s_ota,
-                  s_display.getBusMutex(),
-                  s_display.getBusHandle());
 
     // ── 6. Sensor calibration + clock tick task ───────────────────────────────
     ESP_LOGI(TAG, "Calibrating sensor...");

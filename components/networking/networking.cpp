@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
@@ -60,6 +61,11 @@ void Networking::set_timezone_override(const char* tz)
     ESP_LOGI(TAG, "Timezone override: %s", tz_override_);
 }
 
+void Networking::set_mdns_hostname_hint(const char* name)
+{
+    if (name) strncpy(mdns_hostname_hint_, name, sizeof(mdns_hostname_hint_) - 1);
+}
+
 // ── begin() ───────────────────────────────────────────────────────────────────
 
 void Networking::begin()
@@ -100,6 +106,25 @@ void Networking::begin()
         if (e != ESP_OK) {
             ESP_LOGW(TAG, "esp_wifi_init: %s (already initialised by Matter)",
                      esp_err_to_name(e));
+        }
+    }
+
+    // 4b. Pre-populate mDNS hostname in status so /api/status and the WebSocket
+    //     always return the real name, even before WiFi connects and mdns_task runs.
+    //     Works on both WiFi and Matter paths — MAC is readable after esp_wifi_init.
+    {
+        char hostname[32] = {};
+        if (mdns_hostname_hint_[0] != '\0') {
+            strncpy(hostname, mdns_hostname_hint_, sizeof(hostname) - 1);
+        } else {
+            uint8_t mac[6] = {};
+            if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+                snprintf(hostname, sizeof(hostname), "clock_%02x%02x", mac[4], mac[5]);
+            }
+        }
+        if (hostname[0] != '\0') {
+            strncpy(status_.mdns_hostname, hostname, sizeof(status_.mdns_hostname) - 1);
+            ESP_LOGI(TAG, "mDNS hostname (pre-start): %s", hostname);
         }
     }
 
@@ -263,8 +288,11 @@ void Networking::on_got_ip(esp_netif_ip_info_t* ip_info)
     // Start SNTP now that we have IP
     start_sntp();
 
-    // Launch geolocation in a separate task (HTTP blocks)
-    xTaskCreate(geo_task, "geo", 6144, this, 4, nullptr);
+    // Launch geolocation and mDNS in separate tasks — both must not run
+    // inside the event handler callback (mdns_init registers its own event
+    // handlers and blocks briefly; doing so here can deadlock the event loop).
+    xTaskCreate(geo_task,  "geo",      6144, this, 4, nullptr);
+    xTaskCreate(mdns_task, "net_mdns", 4096, this, 3, nullptr);
 }
 
 void Networking::on_wifi_disconnected()
@@ -300,6 +328,61 @@ void Networking::on_wifi_disconnected()
     }
 }
 
+// ── mDNS ──────────────────────────────────────────────────────────────────────
+
+void Networking::start_mdns()
+{
+    // On the Matter WiFi path (ssid_ is empty), only start mDNS when the device
+    // is already commissioned.  During first-time BLE commissioning, CHIP's minimal
+    // mDNS and our mdns_init() both bind to 224.0.0.251:5353, exhausting CHIP's
+    // packet buffers and killing the BLE handshake (PacketBuffer: pool EMPTY).
+    // After commissioning, BLE is inactive on reboot so both stacks coexist safely.
+    if (ssid_[0] == '\0' && !matter_commissioned_) {
+        ESP_LOGI(TAG, "mDNS: skipped (Matter first-time commissioning — BLE active)");
+        return;
+    }
+
+    // Derive hostname: saved hint → fall back to "clock_XXXX" from last 2 MAC bytes.
+    char hostname[32] = {};
+    if (mdns_hostname_hint_[0] != '\0') {
+        strncpy(hostname, mdns_hostname_hint_, sizeof(hostname) - 1);
+    } else {
+        uint8_t mac[6] = {};
+        esp_wifi_get_mac(WIFI_IF_STA, mac);
+        snprintf(hostname, sizeof(hostname), "clock_%02x%02x", mac[4], mac[5]);
+    }
+
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "mDNS init failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    // mdns_init() is called after IP_EVENT_STA_GOT_IP already fired, so the
+    // mDNS task's PCB is still disabled (it missed the IP event).  Enable it
+    // explicitly BEFORE setting the hostname so that mdns_hostname_set()
+    // triggers the probe+announce cycle on the now-active STA interface.
+    if (netif_) {
+        mdns_netif_action(netif_, MDNS_EVENT_ENABLE_IP4);
+    }
+
+    mdns_hostname_set(hostname);
+    mdns_instance_name_set(hostname);
+    mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
+
+    strncpy(status_.mdns_hostname, hostname, sizeof(status_.mdns_hostname) - 1);
+    ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
+}
+
+void Networking::set_mdns_hostname(const char* name)
+{
+    if (!name || name[0] == '\0') return;
+    strncpy(mdns_hostname_hint_, name, sizeof(mdns_hostname_hint_) - 1);  // survive reconnect
+    mdns_hostname_set(name);
+    strncpy(status_.mdns_hostname, name, sizeof(status_.mdns_hostname) - 1);
+    ESP_LOGI(TAG, "mDNS hostname updated: %s.local", name);
+}
+
 // ── SNTP ──────────────────────────────────────────────────────────────────────
 
 void Networking::start_sntp()
@@ -317,6 +400,12 @@ void Networking::start_sntp()
 void Networking::geo_task(void* arg)
 {
     static_cast<Networking*>(arg)->do_geolocation();
+    vTaskDelete(nullptr);
+}
+
+void Networking::mdns_task(void* arg)
+{
+    static_cast<Networking*>(arg)->start_mdns();
     vTaskDelete(nullptr);
 }
 

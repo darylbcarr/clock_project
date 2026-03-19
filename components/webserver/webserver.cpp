@@ -269,6 +269,15 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
         ConfigStore::save(nc);
     }
 
+    // ── mDNS hostname (apply live + persist) ──────────────────────────────────
+    if ((j = cJSON_GetObjectItem(body, "mdns_hostname")) && cJSON_IsString(j)) {
+        self->net_.set_mdns_hostname(j->valuestring);
+        NetCfg nc;
+        ConfigStore::load(nc);
+        snprintf(nc.mdns_hostname, sizeof(nc.mdns_hostname), "%s", j->valuestring);
+        ConfigStore::save(nc);
+    }
+
     cJSON_Delete(body);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -508,7 +517,8 @@ char* WebServer::build_status_json()
     cJSON_AddBoolToObject  (root, "ota_checking", ota_ ? ota_->is_checking()               : false);
 
     // Network / WiFi
-    cJSON_AddBoolToObject  (root, "wifi",        net.wifi_connected);
+    cJSON_AddStringToObject(root, "mdns_hostname", net.mdns_hostname);
+    cJSON_AddBoolToObject  (root, "wifi",          net.wifi_connected);
     cJSON_AddStringToObject(root, "ssid",        net.ssid);
     cJSON_AddNumberToObject(root, "rssi",        static_cast<double>(net.rssi));
     cJSON_AddStringToObject(root, "local_ip",    net.local_ip);

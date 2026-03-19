@@ -28,9 +28,10 @@ struct LedCfg {
 
 /// Persisted network credentials and timezone override
 struct NetCfg {
-    char ssid[64]        = {};
-    char password[64]    = {};
-    char tz_override[80] = {};
+    char ssid[64]           = {};
+    char password[64]       = {};
+    char tz_override[80]    = {};
+    char mdns_hostname[32]  = {};   ///< e.g. "clock_a1b2"; empty = derive from MAC
 };
 
 /**
