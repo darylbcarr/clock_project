@@ -1,0 +1,67 @@
+Using c++ write a component/class to setup and control a Matter Extended Color Light. Use ESP-IDF. Suggest a CMakeLists.txt and idf_component.yml files and main.cpp code. Integrate a WS282 NeoPixel to map color attributes. Add GPIO pin configuration and Matter provisioning (QR code) setup. This is for an ESP-32-S3 device. There will be two LED strips. The light GPIO pins are: 1 (main), 2 (base).
+This is for an ESP32-S3 device using VSCode and ESP-IDF. Using c++ write a component/class to setup and control a Matter Extended Color Light. Use ESP-IDF. Suggest a CMakeLists.txt and idf_component.yml files and main.cpp code. Add Multi-Admin support. Create a second component/class for the 2 led_strips that Matter will interface. Integrate WS282 NeoPixel to map color attributes. GPIO pin configuration and Matter provisioning (QR code) setup. The light GPIO pins are: 1 (main), 2 (base). Create a third component/class framework for a Web site control system. This should be a single page website with a 'hamburger' menu.
+
+Write a c++ component/class for VSCode, ESP-IDF to create and manage a menu system that is displayed on I2C ssd1306 (port 0x36) controlled by I2c Rotary Encoder (port 0x38). It is an 8 line display. Variable number of menus. Scrollable lines for menus greater than 8 lines. Include sample menus for the led_strip control, etc.
+
+I am building a ESP32-S3 project. I am developing slowly, adding one component at a time. I am starting with a menu system connected to a I2C ssd1306 that will control the menu with a I2C connected rotary control and a push button (the prototype will use the Adafruit I2C Stemma QT Rotary Encoder). I anticipate only using text. I would like to split this into two components, one for display and the other for menu. I need something to demarcate the cursor (by line) such as a leading '>' or reverse line display. Since I'm only using text the directly driving the ssd1306 could work but a previous attempt was unsuccessful in getting a clean display. This will eventually interface with a websocket system. I did have a succesfull display experience but used the k0i05/esp_ssd1306 driver. But that may bring along a lot of unused code. Here is a sample main menu: Status, Lights, Clock, Options, System Info, Logs. A sample submenu Lights: Color, Brightness. I have a test project that displays text correctly but uses the k0i05/esp_ssd1306 driver. Can you create a test program with these two components. System: VScode, ESP-IDF v5.4.1, Ubuntu 24.04.
+
+I have started a new ESP-IDF c++ project for the ESP32S3. I have connected the ssd1306 device: SCL GPIO9, SDA GPIO8 with 4.7Kohm resistors to v3.3. I would like to use a component called 'display' to setup and manage printing text. I want to use the k0i05/esp_ssd1306 component. I want to be able to scroll and define a 'selected' line (reverse). The display size is 128x64. Can you suggest the files and setup procedure?
+
+I am building an ESP32-S3 project. I am using the ESP-IDF framework (v5.4.1), C++. I am building this in pieces and will combine later. At this time I am building a stepper motor driver component and a clock component. This motor will drive a gear that moves a clock minute hand (other gears will keep the hour hand in sync). I have an led and light sensor combination that can sense the minute hand position (close to the top of the hour). The idea is to reliably note the sensor trigger and adjust the hand if early or late in relation to the actual time. The motor movement can only happen every minute but I want to test more often but it doesn't have to move continuously. I am interested in the motor sound (quiter the better). The motor is a 28BYJ-48 driven through a ULN2003 driver. I am aware of the torque limitations of the motor. The driver pins are connected to the ESP32-S3 on 1=GPIO16, 2=GPIO15, 3=GPIO7, 4=GPIO6. The LED is connected to GPIO13 through a 330ohm to the anode and the LDR to GPIO14 through 10Kohm to ground. The clock component will control movement with time. It also needs observe the sensor trigger changes and adjust the clock as necessary. There should be commands to: 1) move the hands to 'set' the time (in relation to the clock observed time), 2) microstep the motor (forward or back) to fine tune the hand position, 3) test/find the average (no LED light found) sensor reading to reliably determine when the LED is seen, 4) determine the distance between the sensor trigger and the top of the hour (reported by user). The clock component is also responsible for getting the actual time of day through the Internet (a neworking component will be built later). It also will have a set of funtions to return the time in multiple text formats using the common format codes. The networking component will determines the current time zone. Can you help design a new project and integrate the functionality of these components?
+
+The zip file contains the components, main and managed_components use in the test program. The I2C pins SCL:9, SDA:8, the SSD1306 is on default 0x3C, the seesaw encoder is on 0x36. They share the same I2C bus. The encoder component handles the rotation and button. The menu is a test setup with nested. The display uses the k0i05/esp_ssd1306. The menu will be acessible at any time but the display should blank after 5 minutes. A button press or rotation should wake it up. The menu should control everything possible and present information and logs and statuses. To come... 1) to integrate a web based control system that will mimic the menu functions 2) two LED WS2812B strips with contol and 3) Matter integration.
+
+Can we add a led component? This will be an extensible module that controls/manages two ws2812b addressable led strips. 1:on GPIO1 2:on GPIO2 Initially it will set color and brightness but will eventually be able to process and control different lighting effects on each light. If possible suggest some lighting effects to get started. The number of lights/strip will be adjustable. There should be selectable setting to modify both strips together or each seperately. Future step is to add a Matter component that will address these two led strips separately. I would like to add control/status to the menu and to the web module. I have the module Matter module tested but want to wait untill the last step because of its 'heavy' build times.
+
+To Do:
+Ability to enter input in menu. Perhaps by rotating through alphabet/numbers/special chars. Possible set Network and Password.
+Center Menu titles
+Ability (example) of menus with > 8 lines to show scrolling ability (use hardware)
+Is motor movement looking for sensor trigger? Moving by minute does not turn on sensor LED
+Check the menu and web stay syncrhonized.
+Allow to set time from Observed time to network time (forward/backward for efficiency)
+Menu/Web set lights/strip, motor direction
+Web light/dark feature
+Ability to update steps/minute (menu only ?)
+Testing for more frequent clock updates (less than a minute) to test sound differences
+Web menus: Clock, Lighting, Settings, Sys Info, Logs
+Settings: Led 1: count, LED 2 count, Motor Dir
+System Info: Software Version, Netwwork Info, light status, Time zone, Sensor info
+Logs: Set Clock, Startup
+Check i2c stability. i2c-scan sometimes show phantom device.
+Menu wake-up, don't execute the wake-up action
+Menu consistency with title at every level, reverse only where focus is rewuired (simple info page still has focus reverse line) use long press for back (not "press to return).
+Menu: ability vertical scroll longer lines (hardware)
+Note, menu>status>network reverts automatically after 30 seconds
+
+
+Let's concentrate on the menu system. Goals: 1) All screens have static title centered on the top line. 2) Long menus scroll vertically using harware feature. 3) Ability for longer lines using horizontal scrolling back and forth. 4) all screens have "go back" by long press (not 'press to return') 5) On the wake-up command, don't execute the command (just wake up and ignore) 5) add two buttons that we can use to control the menu. ButtonA (GPIO10) will simulate menu up and ButtonB (GPIO11) for menu down. Press both for select.
+
+Let's modify the web system. 1) Day and night display option 2) various color theme options 3) the Clock page should display the time/date (good as is), then have a section with a time selection option "Observerd clock time" and a button: "Set Clock to Actual Time" that will start the process of moving the clock hands to the actual time. Note that the process may take longer than one minute so a final compensation is needed. Another section called "Fine Tune" with buttons: Step Forward, Step Backward. A Timezone status section. No mootor status 4) On the Lights page: Control brightness with the slider controls instead of buttons. Allow independent brightness/color/effects for each strip. No 'Off' feature. Extend the Colour presets to include all those supported by a Matter controller. 5) remove the Status page and replace with Information page that includes: Software Version, WiFi SSID, Local IP, Internet IP, IANA Timezone, POSIX timezone, Strip 1 and Strip 2 status (color/effect, brightness), list of all GPIO pins/functions, sensor-to-hour offset, average sensor ADC reading, Sensor-to-hour offset. Choose a logical and attrative layout for the information. 6) A Configuration page to adust: Strip 1 and Strip 2 LED counts, A Motor direction selection (Normal or Reverse) that changes the motor GPIO list because the motor can be wired differnetly. A secction to adjust/test the sensor-to-hour offset and average sensor ADC reading.
+
+Setup persistance of configuration including, number of LED/strip, color/brighness, motor direction, number of steps/minute, SSID, Password, Timezone, anything else that makes sense to save. Save current minute so when booting later (ex. 23 minutes later) the boot process will move to the correct time.
+
+Why do you keep losing esp-idf and python, etc. setup such you have to ask to run multiple bash commands. Also, is there a config to not have to ask for permission?
+
+The webserver updates/synchronizes with the device. Items that require a 'Save' or 'Apply' shoudld not update all the time. For instance, the number of leds and motor speed are difficult to change because the numbers get updated before clicking. Some things should only update when they get changed external from the website.
+
+Can you descibe how OTA updates could work. If I provide a web site, what would be the program construction and the process that would occur. Can the device periodically check for an update?
+
+Currently the Clock set only moves 59 or less minutes. We need to look at the Observed Clock Position and move to the actual time. So if the clock says: 11:15 and it is 2:14 it needs to move forward 179 minutes. This is a 12 hour clock so you can ignore AM/PM.
+
+Can we set the two buttons (GPIO 10 and 11) to simulate the rotor button push (select) with either button long press and to simulate dismiss with a two button press?
+
+Need to setup for OTA. 
+
+Need to setup for Matter.
+
+Determine process to setup network only through menu/display vs Matter.
+
+In considering how a non-programmer will setup this device I would like to change the startup process if possible. Some       
+devices will have the two buttons, some will have the encoder, and finally, some will have both. I would like to setup all     
+menu use to respond when either one or the other are activated. In most cases they should respond: [move-up]: button1 press, rotate counterclockwise. [move-down]: button2 press, rotate clockwise. [select]: button1 long press, encoder press. [go-back]: Press 1 and 2 press at same time, encoder long press. Next, the Setup WiFi section can be different assuming it is done once and only if not using Matter. So can we display a block of all possible characters and 'select' 'clear' buttons below those characters.  The 'clear' button will erase all text and 'select' button will continue. Can we use the encoder and/or the two buttons to move through and select using a logical selction of rotate, press, double press, long press, and both buttons together. Can rotate or long button presses quickly slide through the characters with the button continous press speeding. For buttons a single press could still select. Let me know if you have other suggestions. 
+
+Setting the SSID and password with buttons is cumbersome and error prone. Can you change the functions to include long press A to add long press B to remove, press both to accept, long press both to go back. And can you speed up (say by 50%) the character scrolling feature. Even if you go past the target it will be easy to backup.
+
+Using buttons with SSID/Password entry... there is no auto slide when holding down >600ms. Also change select from A+B to last char position like encoder. Using A+B can too easily be interpreted as Go Back, etc.
+

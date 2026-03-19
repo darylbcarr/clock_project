@@ -167,7 +167,7 @@ dependencies:
       type: service
     version: 1.10.1
   espressif/rmaker_common:
-    component_hash: e0b1c5e5ffd738fc471224dfc34f6624b78c3328f50d7276b57e2e9fda124665
+    component_hash: c7bcaed645c54c781bb9e75067fc213cf1ce1d0d71f7276621eadd02b89a71e9
     dependencies:
     - name: idf
       require: private
@@ -175,7 +175,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.6.1
+    version: 1.7.0
   idf:
     source:
       type: idf
@@ -217,6 +217,6 @@ direct_dependencies:
 - espressif/mdns
 - idf
 - k0i05/esp_ssd1306
-manifest_hash: 3051dd07b3de5f666342bd6ff2be25ac7b6e36ad4f5ec7caca9014d1f4995ef3
+manifest_hash: 32cec36efbb849c3d5725b95a141635d3debd33ec7599c0416b0bd9ff775e434
 target: esp32s3
 version: 2.0.0
