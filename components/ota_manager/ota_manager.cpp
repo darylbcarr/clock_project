@@ -77,7 +77,7 @@ void OtaManager::start(Display& display, std::function<bool()> is_connected_fn)
     display_         = &display;
     is_connected_fn_ = is_connected_fn;
     action_queue_    = xQueueCreate(1, sizeof(TaskAction));
-    xTaskCreate(ota_task, "ota_check", 8192, this, 2, nullptr);
+    xTaskCreate(ota_task, "ota_check", 12288, this, 2, nullptr);
     ESP_LOGI(TAG, "OTA task started  (running v%s)", running_version());
 }
 
@@ -247,9 +247,13 @@ esp_err_t OtaManager::do_check_and_update()
     http_cfg.timeout_ms        = 60000;
     http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
     http_cfg.keep_alive_enable = true;
+    // GitHub releases redirect to a CDN; the 302 response headers are large.
+    // Default buffer (512 B) overflows before the redirect is processed.
+    http_cfg.buffer_size       = 4096;
+    http_cfg.buffer_size_tx    = 1024;
 
     esp_https_ota_config_t ota_cfg = {};
-    ota_cfg.http_config = &http_cfg;
+    ota_cfg.http_config            = &http_cfg;
 
     esp_err_t ret = esp_https_ota(&ota_cfg);
 
