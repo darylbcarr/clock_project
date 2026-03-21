@@ -47,12 +47,16 @@ jobs:
 
       # ── 5. Update version.json and push to main ───────────────────────────────
       # Devices poll this file to discover new releases.
+      # We check out the tip of origin/main first so this commit always fast-forwards,
+      # even when origin/main has moved ahead of the tagged commit (e.g. after a rebase).
       - name: Update version.json
         run: |
           REPO="${{ github.repository }}"
           TAG="${GITHUB_REF_NAME}"
           VER="${{ env.VERSION }}"
           URL="https://github.com/${REPO}/releases/download/${TAG}/clock_project.bin"
+          git fetch origin main
+          git checkout origin/main
           printf '{\n  "version": "%s",\n  "url": "%s"\n}\n' "$VER" "$URL" > version.json
           git config user.name  "GitHub Actions"
           git config user.email "actions@github.com"
