@@ -32,6 +32,7 @@ private:
     static esp_err_t on_api_cmd(httpd_req_t* req);
     static esp_err_t on_api_cfg(httpd_req_t* req);
     static esp_err_t on_api_ota(httpd_req_t* req);
+    static esp_err_t on_api_scan_results(httpd_req_t* req);
     static esp_err_t on_ws(httpd_req_t* req);
 
     // Background tasks

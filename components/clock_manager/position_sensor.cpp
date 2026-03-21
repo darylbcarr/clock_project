@@ -50,7 +50,7 @@ void PositionSensor::init_gpio()
 void PositionSensor::init_adc()
 {
     adc_oneshot_unit_init_cfg_t unit_cfg = {};
-    unit_cfg.unit_id  = ADC_UNIT_1;
+    unit_cfg.unit_id  = ADC_UNIT_2;   // GPIO14 = ADC2_CH3 on ESP32-S3
     unit_cfg.ulp_mode = ADC_ULP_MODE_DISABLE;
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_cfg, &adc_handle_));
 
@@ -92,7 +92,6 @@ int PositionSensor::read_average(int samples)
     int64_t sum = 0;
     for (int i = 0; i < samples; ++i) {
         sum += read_raw();
-        // Small yield every 16 samples
         if ((i & 0x0F) == 0x0F) taskYIELD();
     }
     return static_cast<int>(sum / samples);
@@ -100,17 +99,73 @@ int PositionSensor::read_average(int samples)
 
 // ── Calibration ──────────────────────────────────────────────────────────────
 
-int PositionSensor::calibrate_dark()
+int PositionSensor::calibrate_safe()
 {
-    ESP_LOGI(TAG, "Calibrating dark baseline (%d samples)...", SENSOR_CALIB_SAMPLES);
+    const int N = SENSOR_CALIB_SAMPLES;  // 64
+    int buf[N];
+
     led_on();
-    int mean = read_average(SENSOR_CALIB_SAMPLES);
+    for (int i = 0; i < N; ++i) {
+        buf[i] = read_raw();
+        if ((i & 0x0F) == 0x0F) taskYIELD();
+    }
     led_off();
+
+    // Insertion sort (N=64, fast enough)
+    for (int i = 1; i < N; ++i) {
+        int key = buf[i];
+        int j   = i - 1;
+        while (j >= 0 && buf[j] > key) {
+            buf[j + 1] = buf[j];
+            --j;
+        }
+        buf[j + 1] = key;
+    }
+
+    // Average the bottom 75% — slot reflections are high outliers, so
+    // dropping the top 25% removes them even if the hand is near the slot.
+    int use_n = (N * 3) / 4;   // 48 samples
+    int64_t sum = 0;
+    for (int i = 0; i < use_n; ++i) sum += buf[i];
+    int mean = static_cast<int>(sum / use_n);
 
     dark_mean_ = mean;
     threshold_ = mean + SENSOR_THRESHOLD_MARGIN;
 
-    ESP_LOGI(TAG, "Dark mean = %d  |  Threshold set to %d", dark_mean_, threshold_);
+    ESP_LOGI(TAG, "calibrate_safe: dark_mean=%d  threshold=%d  (used %d/%d samples, "
+             "min=%d  max=%d)",
+             dark_mean_, threshold_, use_n, N, buf[0], buf[N - 1]);
+    return dark_mean_;
+}
+
+int PositionSensor::calibrate_from_samples(int* buf, int n)
+{
+    if (n <= 0) return 0;
+
+    // Insertion sort (in-place)
+    for (int i = 1; i < n; ++i) {
+        int key = buf[i];
+        int j   = i - 1;
+        while (j >= 0 && buf[j] > key) {
+            buf[j + 1] = buf[j];
+            --j;
+        }
+        buf[j + 1] = key;
+    }
+
+    // Average bottom 75% — slot reflections are high outliers
+    int use_n = (n * 3) / 4;
+    if (use_n < 1) use_n = 1;
+    int64_t sum = 0;
+    for (int i = 0; i < use_n; ++i) sum += buf[i];
+    int mean = static_cast<int>(sum / use_n);
+
+    dark_mean_ = mean;
+    threshold_ = mean + SENSOR_THRESHOLD_MARGIN;
+
+    ESP_LOGI(TAG, "calibrate_from_samples: dark_mean=%d  threshold=%d  "
+             "(used %d/%d samples, min=%d  max=%d)",
+             dark_mean_, threshold_, use_n, n, buf[0], buf[n - 1]);
     return dark_mean_;
 }
 

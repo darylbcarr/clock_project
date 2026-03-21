@@ -105,6 +105,9 @@ void StepperMotor::move_steps(int steps, StepDirection direction)
 {
     if (steps <= 0) return;
 
+    cancel_requested_    = false;   // clear any stale cancel from before this move
+    last_move_cancelled_ = false;
+    busy_    = true;
     powered_ = true;
     ESP_LOGD(TAG, "Moving %d steps %s",
              steps, direction == StepDirection::FORWARD ? "FWD" : "BWD");
@@ -117,11 +120,17 @@ void StepperMotor::move_steps(int steps, StepDirection direction)
     const TickType_t actual_delay = (delay_ticks > 0) ? delay_ticks : 1;
 
     for (int i = 0; i < steps; ++i) {
+        if (cancel_requested_) {
+            last_move_cancelled_ = true;
+            ESP_LOGI(TAG, "Move cancelled after %d/%d steps", i, steps);
+            break;
+        }
         step_once(direction);
         vTaskDelay(actual_delay);   // yields every step — watchdog stays fed
     }
 
     power_off();
+    busy_ = false;
 }
 
 void StepperMotor::move_revolutions(float revolutions)

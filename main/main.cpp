@@ -549,6 +549,10 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "  Analog Clock Driver  — ESP32-S3  v%s", OtaManager::running_version());
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
 
+    // Silence httpd warnings from Alexa/Hue-bridge probes hitting unknown URIs.
+    esp_log_level_set("httpd_uri",  ESP_LOG_ERROR);
+    esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
+
     // ── OTA rollback guard ────────────────────────────────────────────────────
     // If rollback is enabled (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y), the
     // bootloader marks a freshly-flashed OTA image as "pending verify".
@@ -580,7 +584,7 @@ extern "C" void app_main()
     // Apply clock config before start()
     s_clock.set_motor_reverse(clockCfg.motor_reverse);
     s_clock.set_step_delay_us(clockCfg.step_delay_us);
-    s_clock.cmd_set_sensor_offset(clockCfg.sensor_offset);
+    if (clockCfg.sensor_offset_steps) s_clock.set_sensor_offset_steps(clockCfg.sensor_offset_steps);
     if (clockCfg.disp_minute >= 0 && clockCfg.disp_hour >= 0) {
         s_clock.set_displayed_minute(clockCfg.disp_minute);
         s_clock.set_displayed_hour(clockCfg.disp_hour);
@@ -849,7 +853,7 @@ extern "C" void app_main()
 
     // ── 6. Sensor calibration + clock tick task ───────────────────────────────
     ESP_LOGI(TAG, "Calibrating sensor...");
-    s_clock.cmd_calibrate_sensor();
+    s_clock.cmd_calibrate_sensor_safe();
     s_clock.start();
 
     // ── 7. Encoder poll task (priority 4) ─────────────────────────────────────

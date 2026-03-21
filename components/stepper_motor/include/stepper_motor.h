@@ -145,6 +145,20 @@ public:
 
     bool is_powered() const { return powered_; }
 
+    // ── Cancel / busy ─────────────────────────────────────────────────────────
+
+    /**
+     * @brief Request early termination of the current move_steps() call.
+     *        Safe to call from any task; takes effect within one step (~2 ms).
+     */
+    void request_cancel() { cancel_requested_ = true; }
+
+    /** @brief True while move_steps() / move_clock_minutes() is executing. */
+    bool is_busy() const { return busy_; }
+
+    /** @brief True if the last move_steps() was cut short by request_cancel(). */
+    bool was_cancelled() const { return last_move_cancelled_; }
+
 private:
     void init_gpio();
     void apply_phase(int phase_index);
@@ -155,6 +169,10 @@ private:
     int64_t  total_steps_;
     bool     powered_;
     bool     reverse_ = false;
+
+    volatile bool cancel_requested_   = false;
+    volatile bool busy_               = false;
+    bool          last_move_cancelled_= false;
 
     /// Half-step sequence: [IN1, IN2, IN3, IN4]
     static const uint8_t half_step_sequence_[HALF_STEP_PHASES][4];

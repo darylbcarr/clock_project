@@ -45,6 +45,13 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # WebSocket support for the HTTP server
 CONFIG_HTTPD_WS_SUPPORT=y
 
+# mDNS: use ESP-IDF mDNS (not Matter's minimal-mDNS stack).
+# Both stacks compete for the 224.0.0.251:5353 multicast socket.
+# With =n, Matter uses ESP32DnssdImpl (ESP-IDF mDNS) and our start_mdns()
+# coexists: on the Matter path we register a delegated hostname instead of
+# calling mdns_hostname_set, so Matter's operational-node ad is unaffected.
+CONFIG_USE_MINIMAL_MDNS=n
+
 # ── IRAM reduction ───────────────────────────────────────────────────────────
 # WiFi ISR MUST stay in IRAM (default=y) for reliable BLE+WiFi coexistence.
 # When WiFi ISR runs from flash (=n), latency during BLE radio activity is

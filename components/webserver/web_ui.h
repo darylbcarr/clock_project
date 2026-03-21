@@ -135,6 +135,15 @@ html, body {
 
 /* ── Observed time input ── */
 .obs-row { display: flex; gap: 8px; align-items: center; }
+.set-progress { display: none; align-items: center; gap: 10px; margin-top: 10px; }
+.set-progress.visible { display: flex; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--a);
+  animation: spin .7s linear infinite; flex-shrink: 0;
+}
+.set-progress-text { font-size: 13px; color: var(--muted); flex: 1; }
 #obs-time {
   flex: 1; padding: 8px 12px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--surf2);
@@ -297,13 +306,22 @@ input[type=range]::-webkit-slider-thumb {
     </p>
     <div class="obs-row">
       <input type="time" id="obs-time" value="12:00">
-      <button class="btn btn-primary" onclick="doSetTime()">Set Clock to Actual Time</button>
+      <button class="btn btn-primary" id="set-time-btn" onclick="doSetTime()">Set Clock to Actual Time</button>
+    </div>
+    <div class="set-progress" id="set-progress">
+      <div class="spinner"></div>
+      <span class="set-progress-text">Setting clock hands&hellip;</span>
+      <button class="btn btn-secondary" onclick="doCancelSet()">Cancel</button>
     </div>
   </div>
 
   <!-- Fine Tune -->
   <div class="card">
     <div class="card-title">Fine Tune</div>
+    <div class="tune-row" style="margin-bottom:8px;">
+      <button class="btn btn-secondary" onclick="post('min-bwd')">&#8676; 1 Min Back</button>
+      <button class="btn btn-secondary" onclick="post('min-fwd')">1 Min Fwd &#8677;</button>
+    </div>
     <div class="tune-row">
       <button class="btn btn-secondary" onclick="post('step-bwd')">&#8592; Step Back</button>
       <button class="btn btn-secondary" onclick="post('step-fwd')">Step Forward &#8594;</button>
@@ -451,7 +469,8 @@ input[type=range]::-webkit-slider-thumb {
   <div class="card">
     <div class="card-title">Sensor</div>
     <div class="info-grid">
-      <div class="info-item"><div class="info-label">Sensor Offset</div><div class="info-val" id="inf-offset">—</div></div>
+      <div class="info-item"><div class="info-label">Slot Offset</div><div class="info-val" id="inf-offset">—</div></div>
+      <div class="info-item"><div class="info-label">Dark Mean / Threshold</div><div class="info-val" id="inf-sen-thr">—</div></div>
       <div class="info-item"><div class="info-label">Last ADC Reading</div><div class="info-val" id="inf-adc">—</div></div>
       <div class="info-item"><div class="info-label">Motor Direction</div><div class="info-val" id="inf-mdir">—</div></div>
       <div class="info-item"><div class="info-label">IANA TZ</div><div class="info-val" id="inf-tz-iana">—</div></div>
@@ -492,24 +511,81 @@ input[type=range]::-webkit-slider-thumb {
   <!-- Sensor Calibration -->
   <div class="card">
     <div class="card-title">Sensor Calibration</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-      The sensor offset compensates for the physical gap between where the magnet/reflector triggers and the actual top-of-hour position.
-    </p>
-    <div class="cfg-row">
-      <label>Sensor offset (seconds)</label>
-      <div class="offset-ctrl">
-        <button class="btn btn-secondary btn-sm" onclick="adjOffset(-1)">&#8722;</button>
-        <span class="offset-val" id="cfg-offset-val">0</span>
-        <button class="btn btn-secondary btn-sm" onclick="adjOffset(+1)">&#43;</button>
+
+    <!-- Step 1: Background -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Step 1 — Background Sample</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Advances the ring ~10 minutes while sampling the sensor across multiple positions. Sets the detection threshold. Takes ~12 seconds.</p>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-secondary btn-sm" onclick="doCalibrateSafe()">Sample Background</button>
+        <span style="font-size:11px;color:var(--muted);" id="cal-bg-result"></span>
       </div>
-      <button class="btn btn-secondary btn-sm" onclick="saveOffset()">Save</button>
     </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="doCalibrate()">Calibrate Dark</button>
-      <button class="btn btn-secondary btn-sm" style="flex:1" onclick="doMeasure()">Measure ADC</button>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:0 0 14px;">
+
+    <!-- Step 2: Offset -->
+    <div>
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Step 2 — Slot Offset</div>
+
+      <!-- IDLE -->
+      <div id="cal-idle">
+        <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">The clock steps forward until the sensor slot triggers, then you step the hand to exactly 12:00 and save.</p>
+        <button class="btn btn-secondary btn-sm" onclick="startOffsetCal()">Find Slot &#9654;</button>
+      </div>
+
+      <!-- MOVING -->
+      <div id="cal-moving" style="display:none;">
+        <p style="font-size:12px;color:var(--muted);">Searching for slot&hellip;</p>
+      </div>
+
+      <!-- FOUND -->
+      <div id="cal-found" style="display:none;">
+        <p style="font-size:12px;margin-bottom:10px;">Slot found. Step the hand to exactly <strong>12:00</strong>, then save.</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <button class="btn btn-secondary" style="flex:1;" onclick="post('step-bwd')">&#9664; Back</button>
+          <button class="btn btn-secondary" style="flex:1;" onclick="post('step-fwd')">Fwd &#9654;</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+          Steps from slot: <span id="cal-steps-val">0</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary btn-sm" style="flex:1;" onclick="finishOffsetCal()">Save Offset</button>
+          <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="abortOffsetCal()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- NOT FOUND -->
+      <div id="cal-notfound" style="display:none;">
+        <p style="font-size:12px;color:#e87c7c;margin-bottom:8px;">Slot not found. Check wiring and background threshold, then try again.</p>
+        <button class="btn btn-secondary btn-sm" onclick="startOffsetCal()">Try Again</button>
+      </div>
+
+      <div style="font-size:11px;color:var(--muted);margin-top:12px;">
+        Saved offset: <span id="cal-saved-offset">—</span>
+      </div>
     </div>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px;">
-      Last ADC: <span id="cfg-adc-val">—</span>
+  </div>
+
+  <!-- Sensor Diagnostics -->
+  <div class="card">
+    <div class="card-title">Sensor Diagnostics</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Test the LED/LDR sensor without a serial console.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="doReadSensor()">Read Now</button>
+      <button class="btn btn-secondary btn-sm" id="btn-scan" onclick="doSensorScan()">Scan Ring (20 min)</button>
+    </div>
+    <div style="font-size:12px;margin-bottom:8px;">
+      Last reading: <span id="diag-adc" style="font-weight:600;">—</span>
+      &nbsp;|&nbsp; Threshold: <span id="diag-thr">—</span>
+      &nbsp;|&nbsp; <span id="diag-trig" style="font-weight:600;"></span>
+    </div>
+    <div id="diag-scan-wrap" style="display:none;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Scan Results</div>
+      <div id="diag-scan-status" style="font-size:11px;color:var(--muted);margin-bottom:6px;"></div>
+      <div id="diag-scan-table" style="font-family:monospace;font-size:11px;line-height:1.5;white-space:pre;overflow-x:auto;background:var(--surface2);padding:8px;border-radius:6px;max-height:240px;overflow-y:auto;"></div>
     </div>
   </div>
 
@@ -644,7 +720,6 @@ const COLORS = [
 
 // ── State ────────────────────────────────────────────────────────────────────
 let brightTimer1 = null, brightTimer2 = null;
-let cfgOffset = 0;
 let lastData = {};
 
 // Config fields that require explicit Save/Apply should only be populated
@@ -757,13 +832,34 @@ function setAutoUpdate(val) {
 }
 
 // ── Clock commands ───────────────────────────────────────────────────────────
+function showSetProgress(visible) {
+  const prog = document.getElementById('set-progress');
+  const btn  = document.getElementById('set-time-btn');
+  if (visible) {
+    prog.classList.add('visible');
+    btn.disabled = true;
+  } else {
+    prog.classList.remove('visible');
+    btn.disabled = false;
+  }
+}
+
+function doCancelSet() {
+  post('cancel-set').then(() => {
+    showSetProgress(false);
+    toast('Move cancelled');
+  }).catch(() => showSetProgress(false));
+}
+
 function doSetTime() {
   const val = document.getElementById('obs-time').value; // "HH:MM"
   if (!val) { toast('Enter observed time', 'err'); return; }
   const parts = val.split(':');
   const observed_hour = parseInt(parts[0], 10) % 12;
   const observed_min  = parseInt(parts[1], 10);
-  post('set-time', {observed_hour, observed_min}).then(() => toast('Set-time command sent'));
+  post('set-time', {observed_hour, observed_min}).then(() => {
+    showSetProgress(true);
+  });
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────
@@ -841,19 +937,79 @@ function setDir(rev) {
   postCfg({motor_reverse: rev});
 }
 
-function adjOffset(delta) {
-  cfgOffset += delta;
-  document.getElementById('cfg-offset-val').textContent = cfgOffset;
-}
-function saveOffset() {
-  postCfg({sensor_offset: cfgOffset});
+function doCalibrateSafe() {
+  document.getElementById('cal-bg-result').textContent = 'Sampling… (~12 s)';
+  post('calibrate-safe');
 }
 
-function doCalibrate() {
-  post('calibrate').then(() => toast('Calibration done'));
+function doReadSensor() {
+  post('read-sensor').then(() => {
+    // last_sensor_adc updates via WebSocket within 1s; force a status fetch now
+    fetch('/api/status').then(r => r.json()).then(applyData).catch(() => {});
+  });
 }
-function doMeasure() {
-  post('measure').then(() => toast('ADC measured'));
+
+let scanPollTimer = null;
+function doSensorScan() {
+  const btn = document.getElementById('btn-scan');
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  document.getElementById('diag-scan-wrap').style.display = '';
+  document.getElementById('diag-scan-table').textContent = '';
+  document.getElementById('diag-scan-status').textContent = 'Running scan (~24 s)…';
+  post('sensor-scan');
+  // Poll /api/scan-results until scanning flag clears
+  scanPollTimer = setInterval(() => {
+    fetch('/api/scan-results').then(r => r.json()).then(d => {
+      if (!d.scanning) {
+        clearInterval(scanPollTimer);
+        scanPollTimer = null;
+        btn.disabled = false;
+        btn.textContent = 'Scan Ring (20 min)';
+        renderScanResults(d);
+      }
+    }).catch(() => {});
+  }, 1500);
+}
+
+function renderScanResults(d) {
+  const thr = d.threshold || 0;
+  const mean = d.mean || 0;
+  document.getElementById('diag-scan-status').textContent =
+    'Done — ' + (d.results ? d.results.length : 0) + ' points  |  mean=' + mean + '  threshold=' + thr;
+  if (!d.results || d.results.length === 0) {
+    document.getElementById('diag-scan-table').textContent = '(no data)';
+    return;
+  }
+  let lines = 'step    ADC    trig?   level\n' +
+              '─────────────────────────────────────────────────\n';
+  d.results.forEach(r => {
+    const trig = r.v > thr;
+    const bar = (trig ? '#' : '=').repeat(Math.min(40, Math.round(r.v * 40 / 4095)));
+    lines += r.s.toString().padEnd(7) + r.v.toString().padEnd(7) +
+             (trig ? 'YES <<< ' : 'no      ') + '|' + bar + '\n';
+  });
+  document.getElementById('diag-scan-table').textContent = lines;
+}
+
+function showCalPhase(phase) {
+  document.getElementById('cal-idle').style.display     = phase === 'idle'      ? '' : 'none';
+  document.getElementById('cal-moving').style.display   = phase === 'moving'    ? '' : 'none';
+  document.getElementById('cal-found').style.display    = phase === 'found'     ? '' : 'none';
+  document.getElementById('cal-notfound').style.display = phase === 'not_found' ? '' : 'none';
+}
+
+function startOffsetCal() {
+  showCalPhase('moving');
+  post('start-offset-cal');
+}
+
+function finishOffsetCal() {
+  post('finish-offset-cal').then(() => toast('Offset saved'));
+}
+
+function abortOffsetCal() {
+  post('abort-offset-cal').then(() => showCalPhase('idle'));
 }
 
 function updateSpeedLabel(v) {
@@ -942,6 +1098,16 @@ function applyData(d) {
     setText('cfg-mdns-display', d.mdns_hostname + '.local');
   }
 
+  // Motor busy — auto-hide progress indicator when motor finishes
+  if (d.motor_busy !== undefined) {
+    const prog = document.getElementById('set-progress');
+    const wasVisible = prog && prog.classList.contains('visible');
+    if (!d.motor_busy && wasVisible) {
+      showSetProgress(false);
+      toast('Clock hands set');
+    }
+  }
+
   // OTA section
   if (d.ota_running !== undefined) setText('ota-running', 'v' + d.ota_running);
   if (d.ota_latest !== undefined) {
@@ -989,8 +1155,35 @@ function applyData(d) {
   setText('inf-s1len', d.leds && d.leds.strip1 ? d.leds.strip1.active_len + ' LEDs' : '—');
   setText('inf-s2len', d.leds && d.leds.strip2 ? d.leds.strip2.active_len + ' LEDs' : '—');
 
-  setText('inf-offset', (d.sensor_offset_sec !== undefined ? d.sensor_offset_sec : '—') + ' s');
+  if (d.sensor_offset_steps !== undefined) {
+    const steps = d.sensor_offset_steps;
+    setText('inf-offset', steps === 0 ? 'not set' : steps + ' steps');
+    const secs = steps > 0 ? ' (≈' + (steps / 614 * 60).toFixed(1) + ' s)' : '';
+    setText('cal-saved-offset', steps === 0 ? 'not calibrated' : steps + ' steps' + secs);
+  }
+  if (d.sensor_dark_mean !== undefined && d.sensor_threshold !== undefined) {
+    setText('inf-sen-thr', d.sensor_dark_mean + ' / ' + d.sensor_threshold);
+    document.getElementById('cal-bg-result').textContent =
+      'Mean: ' + d.sensor_dark_mean + '  Threshold: ' + d.sensor_threshold;
+  }
   setText('inf-adc', d.sensor_adc !== undefined ? d.sensor_adc : '—');
+  // Diagnostics panel
+  if (d.sensor_adc !== undefined && d.sensor_threshold !== undefined) {
+    const trig = d.sensor_adc > d.sensor_threshold;
+    setText('diag-adc', d.sensor_adc);
+    setText('diag-thr', d.sensor_threshold);
+    const trigEl = document.getElementById('diag-trig');
+    if (trigEl) {
+      trigEl.textContent = trig ? 'TRIGGERED' : 'no trigger';
+      trigEl.style.color = trig ? '#4caf50' : '';
+    }
+  }
+  if (d.cal_phase !== undefined) {
+    showCalPhase(d.cal_phase);
+    if (d.cal_phase === 'found' && d.cal_steps !== undefined) {
+      setText('cal-steps-val', d.cal_steps);
+    }
+  }
   setText('inf-mdir', d.motor_reverse ? 'Reverse' : 'Normal');
   setText('inf-tz-iana', d.iana_tz || '—');
   setText('inf-tz-posix', d.posix_tz || '—');
@@ -1002,10 +1195,6 @@ function applyData(d) {
 
   if (!cfgInitialized) {
     // First data received — populate all config inputs
-    if (d.sensor_offset_sec !== undefined) {
-      cfgOffset = d.sensor_offset_sec;
-      document.getElementById('cfg-offset-val').textContent = cfgOffset;
-    }
     if (d.step_delay_us) {
       document.getElementById('cfg-step-delay').value = d.step_delay_us;
       updateSpeedLabel(d.step_delay_us);
@@ -1018,7 +1207,6 @@ function applyData(d) {
 
     // Snapshot initial server state
     serverCfg = {
-      sensor_offset: d.sensor_offset_sec,
       step_delay_us: d.step_delay_us,
       motor_reverse: d.motor_reverse,
       s1len, s2len
@@ -1028,11 +1216,6 @@ function applyData(d) {
   } else {
     // Subsequent pushes — only update a config input if the server value
     // actually changed (catches external changes via UART/console).
-    if (d.sensor_offset_sec !== undefined && d.sensor_offset_sec !== serverCfg.sensor_offset) {
-      cfgOffset = d.sensor_offset_sec;
-      document.getElementById('cfg-offset-val').textContent = cfgOffset;
-      serverCfg.sensor_offset = d.sensor_offset_sec;
-    }
     if (d.step_delay_us && d.step_delay_us !== serverCfg.step_delay_us) {
       document.getElementById('cfg-step-delay').value = d.step_delay_us;
       updateSpeedLabel(d.step_delay_us);
@@ -1053,7 +1236,6 @@ function applyData(d) {
     }
   }
 
-  setText('cfg-adc-val', d.sensor_adc !== undefined ? d.sensor_adc : '—');
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────

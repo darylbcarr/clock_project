@@ -46,11 +46,12 @@ void WebServer::start()
     }
 
     // Register URI handlers — store 'this' as user_ctx
-    httpd_uri_t root    = { "/",           HTTP_GET,  on_root,       this };
-    httpd_uri_t stat    = { "/api/status", HTTP_GET,  on_api_status, this };
-    httpd_uri_t cmd     = { "/api/cmd",    HTTP_POST, on_api_cmd,    this };
-    httpd_uri_t cfg_uri = { "/api/cfg",    HTTP_POST, on_api_cfg,    this };
-    httpd_uri_t ota_uri = { "/api/ota",    HTTP_POST, on_api_ota,    this };
+    httpd_uri_t root    = { "/",                   HTTP_GET,  on_root,             this };
+    httpd_uri_t stat    = { "/api/status",         HTTP_GET,  on_api_status,       this };
+    httpd_uri_t cmd     = { "/api/cmd",            HTTP_POST, on_api_cmd,          this };
+    httpd_uri_t cfg_uri = { "/api/cfg",            HTTP_POST, on_api_cfg,          this };
+    httpd_uri_t ota_uri = { "/api/ota",            HTTP_POST, on_api_ota,          this };
+    httpd_uri_t scan_r  = { "/api/scan-results",   HTTP_GET,  on_api_scan_results, this };
     httpd_uri_t ws   = {
         .uri      = "/ws",
         .method   = HTTP_GET,
@@ -64,6 +65,7 @@ void WebServer::start()
     httpd_register_uri_handler(server_, &cmd);
     httpd_register_uri_handler(server_, &cfg_uri);
     httpd_register_uri_handler(server_, &ota_uri);
+    httpd_register_uri_handler(server_, &scan_r);
     httpd_register_uri_handler(server_, &ws);
 
     xTaskCreate(ws_push_task,  "ws_push",  4096, this, 2, &ws_task_handle_);
@@ -178,6 +180,18 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
         self->pending_obs_min_  = cJSON_IsNumber(mj) ? (int)mj->valueint : -1;
     }
 
+    // cancel-set bypasses the queue: cmd_task is blocked running cmd_set_time(),
+    // so queueing would have no effect until the move finishes.  Set the flag
+    // directly from the HTTP handler — the motor checks it every step (~2 ms).
+    if (strcmp(cmd_name, "cancel-set") == 0) {
+        cJSON_Delete(body);
+        self->clock_mgr_.cmd_cancel_move();
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req, "{\"ok\":true,\"msg\":\"Cancelled\"}",
+                               HTTPD_RESP_USE_STRLEN);
+    }
+
     // Copy name to a fixed-size buffer (queue items are 32 bytes, value-copied)
     char name[32] = {};
     strncpy(name, cmd_name, sizeof(name) - 1);
@@ -234,11 +248,6 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
         cc.motor_reverse = cJSON_IsTrue(j);
         self->clock_mgr_.set_motor_reverse(cc.motor_reverse);
         clock_changed = true;
-    }
-    if ((j = cJSON_GetObjectItem(body, "sensor_offset")) && cJSON_IsNumber(j)) {
-        cc.sensor_offset = (int)j->valueint;
-        self->clock_mgr_.cmd_set_sensor_offset(cc.sensor_offset);
-        // cmd_set_sensor_offset already saves to NVS
     }
     if ((j = cJSON_GetObjectItem(body, "step_delay_us")) && cJSON_IsNumber(j)) {
         uint32_t d = (uint32_t)j->valueint;
@@ -349,6 +358,40 @@ void WebServer::save_led_config()
     ConfigStore::save(cfg);
 }
 
+esp_err_t WebServer::on_api_scan_results(httpd_req_t* req)
+{
+    auto* self  = static_cast<WebServer*>(req->user_ctx);
+    int   count = self->clock_mgr_.scan_count();
+    const ClockManager::ScanEntry* entries = self->clock_mgr_.scan_results();
+    int   thr   = self->clock_mgr_.sensor_threshold();
+    int   mean  = self->clock_mgr_.sensor_dark_mean();
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "threshold", thr);
+    cJSON_AddNumberToObject(root, "mean",      mean);
+    cJSON_AddBoolToObject  (root, "scanning",  self->clock_mgr_.is_scanning());
+
+    cJSON* arr = cJSON_AddArrayToObject(root, "results");
+    for (int i = 0; i < count; ++i) {
+        cJSON* item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "s", entries[i].step);
+        cJSON_AddNumberToObject(item, "v", entries[i].adc);
+        cJSON_AddItemToArray(arr, item);
+    }
+
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t ret = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    return ret;
+}
+
 esp_err_t WebServer::on_ws(httpd_req_t* req)
 {
     if (req->method == HTTP_GET) {
@@ -437,10 +480,16 @@ void WebServer::dispatch_cmd(const char* cmd)
 
     if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(pending_obs_hour_, pending_obs_min_);
     else if (strcmp(cmd, "advance")        == 0) clock_mgr_.cmd_test_advance();
+    else if (strcmp(cmd, "min-fwd")        == 0) clock_mgr_.cmd_test_advance();
+    else if (strcmp(cmd, "min-bwd")        == 0) clock_mgr_.cmd_test_reverse();
     else if (strcmp(cmd, "step-fwd")       == 0) clock_mgr_.cmd_microstep(8, true);
     else if (strcmp(cmd, "step-bwd")       == 0) clock_mgr_.cmd_microstep(8, false);
-    else if (strcmp(cmd, "calibrate")      == 0) clock_mgr_.cmd_calibrate_sensor();
-    else if (strcmp(cmd, "measure")        == 0) clock_mgr_.cmd_measure_sensor_average();
+    else if (strcmp(cmd, "calibrate-safe")    == 0) clock_mgr_.cmd_calibrate_sensor_safe();
+    else if (strcmp(cmd, "start-offset-cal")  == 0) clock_mgr_.cmd_start_offset_cal();
+    else if (strcmp(cmd, "finish-offset-cal") == 0) clock_mgr_.cmd_finish_offset_cal();
+    else if (strcmp(cmd, "abort-offset-cal")  == 0) clock_mgr_.cmd_abort_offset_cal();
+    else if (strcmp(cmd, "read-sensor")       == 0) clock_mgr_.cmd_sensor_read_single();
+    else if (strcmp(cmd, "sensor-scan")       == 0) clock_mgr_.cmd_sensor_scan(20);
     // LED commands
     else if (strcmp(cmd, "led-off")        == 0) leds_.set_effect(LedManager::Target::BOTH, LedManager::Effect::OFF);
     else if (strcmp(cmd, "led-static")     == 0) leds_.set_effect(LedManager::Target::BOTH, LedManager::Effect::STATIC);
@@ -503,10 +552,24 @@ char* WebServer::build_status_json()
     cJSON_AddStringToObject(root, "posix_tz",     net.posix_tz[0] ? net.posix_tz : "");
 
     // Clock details
-    cJSON_AddNumberToObject(root, "sensor_offset_sec", clock_mgr_.sensor_offset_sec());
-    cJSON_AddNumberToObject(root, "sensor_adc",        clock_mgr_.last_sensor_adc());
+    cJSON_AddNumberToObject(root, "sensor_offset_steps", clock_mgr_.sensor_offset_steps());
+    cJSON_AddNumberToObject(root, "sensor_dark_mean",    clock_mgr_.sensor_dark_mean());
+    cJSON_AddNumberToObject(root, "sensor_threshold",    clock_mgr_.sensor_threshold());
+    cJSON_AddNumberToObject(root, "sensor_adc",          clock_mgr_.last_sensor_adc());
+    // Calibration state
+    const char* cal_phase_str = "idle";
+    switch (clock_mgr_.cal_phase()) {
+        case CalPhase::MOVING_TO_SLOT: cal_phase_str = "moving";    break;
+        case CalPhase::SLOT_FOUND:     cal_phase_str = "found";     break;
+        case CalPhase::NOT_FOUND:      cal_phase_str = "not_found"; break;
+        default: break;
+    }
+    cJSON_AddStringToObject(root, "cal_phase",   cal_phase_str);
+    cJSON_AddNumberToObject(root, "cal_steps",   clock_mgr_.cal_steps());
+    cJSON_AddBoolToObject  (root, "scanning",    clock_mgr_.is_scanning());
     cJSON_AddBoolToObject  (root, "motor_reverse",     clock_mgr_.is_motor_reverse());
     cJSON_AddNumberToObject(root, "step_delay_us",     static_cast<double>(clock_mgr_.get_step_delay_us()));
+    cJSON_AddBoolToObject  (root, "motor_busy",        clock_mgr_.is_motor_busy());
     cJSON_AddStringToObject(root, "fw_version",        OtaManager::running_version());
 
     // OTA status

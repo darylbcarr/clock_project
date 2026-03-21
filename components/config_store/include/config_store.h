@@ -4,7 +4,7 @@
 
 /// Persisted clock-motor state
 struct ClockCfg {
-    int32_t  sensor_offset = 0;       ///< Sensor-to-hour offset (seconds)
+    int32_t  sensor_offset_steps = 0; ///< Steps from slot trigger to 12:00
     bool     motor_reverse = false;   ///< Flip motor direction
     uint32_t step_delay_us = 2000;    ///< Per-half-step delay (µs)
     int32_t  disp_minute   = -1;      ///< Last known displayed minute (0-59, -1=unknown)

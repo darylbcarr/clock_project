@@ -27,7 +27,7 @@ ClockManager::ClockManager(uint32_t motor_delay_us)
       sensor_(),
       displayed_minute_(-1),   // unknown until set
       displayed_hour_(-1),     // unknown until set
-      sensor_offset_sec_(0),
+      sensor_offset_steps_(0),
       time_valid_(false),
       running_(false),
       task_handle_(nullptr),
@@ -130,24 +130,31 @@ void ClockManager::clock_task(void* arg)
 
 void ClockManager::tick()
 {
+    // Do not tick during offset calibration — user is manually aligning
+    // the hand and the motor must not move autonomously.
+    if (cal_mode_) return;
+
     xSemaphoreTake(mutex_, portMAX_DELAY);
+    // Re-check after acquiring mutex (in case cal started while we waited).
+    if (cal_mode_) {
+        xSemaphoreGive(mutex_);
+        return;
+    }
 
     struct tm t = get_local_tm();
     ESP_LOGI(TAG, "Tick — real time: %02d:%02d:%02d",
              t.tm_hour, t.tm_min, t.tm_sec);
 
-    // ── Advance the hand one minute ──────────────────────────────────────────
-    advance_one_minute();
+    // Sensor correction window: ±SENSOR_WINDOW_SECONDS around the top of the hour.
+    bool near_hour = (t.tm_min == 59 && t.tm_sec >= (60 - SENSOR_WINDOW_SECONDS))
+                  || (t.tm_min == 0  && t.tm_sec <= SENSOR_WINDOW_SECONDS);
 
-    // ── Check sensor near top-of-hour ────────────────────────────────────────
-    // Sensor window: last 30 s before or first 30 s after the hour
-    int min = t.tm_min;
-    int sec = t.tm_sec;
-    bool near_hour = (min == 59 && sec >= (60 - SENSOR_WINDOW_SECONDS))
-                  || (min == 0  && sec <= SENSOR_WINDOW_SECONDS);
-
-    if (near_hour) {
+    if (near_hour && sensor_offset_steps_ > 0) {
+        // Replace the normal fixed advance with a step-by-step sensor search.
+        // This way the hand stops when the slot is found instead of overshooting it.
         check_sensor_and_correct();
+    } else {
+        advance_one_minute();
     }
 
     xSemaphoreGive(mutex_);
@@ -159,51 +166,48 @@ void ClockManager::tick()
 
 void ClockManager::check_sensor_and_correct()
 {
-    struct tm t = get_local_tm();
-    int seconds_into_hour = t.tm_min * 60 + t.tm_sec;
+    // Advance step-by-step up to one clock-minute, watching for the slot.
+    // This replaces the normal fixed advance near the top of the hour so the
+    // hand stops when the slot is detected rather than overshooting it.
+    const int POLL_EVERY = 10;
+    const int MAX_SEARCH = STEPS_PER_CLOCK_MINUTE;
 
-    bool triggered = sensor_.is_triggered();
-    if (!triggered) {
-        ESP_LOGD(TAG, "Sensor not triggered at %d s into hour", seconds_into_hour);
-        return;
+    int  steps_moved = 0;
+    bool found       = false;
+
+    sensor_.led_on();
+    for (int s = 0; s < MAX_SEARCH && !found; s += POLL_EVERY) {
+        motor_.microstep_n(POLL_EVERY, StepDirection::FORWARD);
+        steps_moved += POLL_EVERY;
+        int raw = sensor_.read_raw();
+        last_sensor_adc_ = raw;
+        if (raw > sensor_.get_threshold()) {
+            found = true;
+        }
     }
+    sensor_.led_off();
 
-    // Apply user-defined offset so that trigger aligns with actual top-of-hour
-    int adjusted_seconds = seconds_into_hour - sensor_offset_sec_;
-
-    // Convert to minute error: positive = hand is late, negative = early
-    // Top-of-hour = second 0 (or 3600).
-    // If the sensor fires at adjusted_seconds = 10, hand is 10 s late.
-    // We convert seconds to fractional minutes for display.
-    int error_seconds = adjusted_seconds;   // relative to hour boundary (0)
-
-    ESP_LOGI(TAG, "Sensor triggered: adjusted_s=%d  error_s=%d",
-             adjusted_seconds, error_seconds);
-
-    // ── Determine correction in whole minutes ────────────────────────────────
-    int error_minutes = error_seconds / 60;
-    if (std::abs(error_minutes) > MAX_AUTO_CORRECT_MINUTES) {
-        ESP_LOGW(TAG,
-                 "Drift (%d min) exceeds auto-correct limit (%d min). "
-                 "Use cmd_set_time().",
-                 error_minutes, MAX_AUTO_CORRECT_MINUTES);
-        return;
+    if (found) {
+        // Slot found — advance the calibrated offset to reach exactly 12:00.
+        motor_.move_steps(sensor_offset_steps_, StepDirection::FORWARD);
+        struct tm t = get_local_tm();
+        displayed_minute_ = 0;
+        displayed_hour_   = t.tm_hour % 12;
+        ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+        ESP_LOGI(TAG, "Sensor correction to %02d:00 (found after %d steps)",
+                 displayed_hour_, steps_moved);
+    } else {
+        // Slot not found within one minute of travel (clock is fast or
+        // sensor uncalibrated) — complete a normal 1-minute advance.
+        int remaining = STEPS_PER_CLOCK_MINUTE - steps_moved;
+        if (remaining > 0)
+            motor_.move_steps(remaining, StepDirection::FORWARD);
+        displayed_minute_ = (displayed_minute_ + 1) % 60;
+        if (displayed_minute_ == 0 && displayed_hour_ >= 0)
+            displayed_hour_ = (displayed_hour_ + 1) % 12;
+        ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+        ESP_LOGD(TAG, "Sensor not found near hour — normal advance");
     }
-
-    if (error_minutes == 0) {
-        ESP_LOGI(TAG, "Hand is within 1-minute tolerance. No correction needed.");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Correcting hand by %d minute(s)", -error_minutes);
-    // A positive error means the sensor fired after the hour — hand is late,
-    // so we need to move backward (rewind) to correct.
-    StepDirection dir = (error_minutes > 0) ? StepDirection::BACKWARD
-                                             : StepDirection::FORWARD;
-    motor_.move_steps(std::abs(error_minutes) * STEPS_PER_CLOCK_MINUTE, dir);
-    displayed_minute_ = (displayed_minute_ - error_minutes + 60) % 60;
-    // Sensor fires near the hour; sync displayed_hour_ from real time
-    displayed_hour_ = t.tm_hour % 12;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,6 +302,14 @@ void ClockManager::cmd_set_time(int obs_hour, int obs_min)
     // This takes real time (~1.23 s per clock-minute at 2 ms/step), so by the
     // time the motor stops, real time has advanced beyond the original target.
     motor_.move_clock_minutes(delta);
+
+    // If the user cancelled mid-move, the hand position is unknown — leave
+    // displayed_* unchanged and let the user re-enter the observed position.
+    if (motor_.was_cancelled()) {
+        ESP_LOGI(TAG, "cmd_set_time: cancelled — hand position unknown");
+        xSemaphoreGive(mutex_);
+        return;
+    }
 
     // Re-read the clock and apply a small catch-up correction for the
     // minutes that elapsed while the motor was running.
@@ -394,36 +406,116 @@ void ClockManager::cmd_microstep(int steps, bool forward)
     StepDirection dir = forward ? StepDirection::FORWARD : StepDirection::BACKWARD;
     ESP_LOGI(TAG, "cmd_microstep: %d steps %s", steps, forward ? "FWD" : "BWD");
     motor_.microstep_n(steps, dir);
+    if (cal_phase_ == CalPhase::SLOT_FOUND) {
+        cal_steps_from_trigger_ += forward ? steps : -steps;
+        ESP_LOGD(TAG, "cal_steps_from_trigger: %d", cal_steps_from_trigger_);
+    }
 }
 
-void ClockManager::cmd_calibrate_sensor()
+void ClockManager::cmd_calibrate_sensor_safe()
 {
-    ESP_LOGI(TAG, "cmd_calibrate_sensor: starting...");
-    int dark = sensor_.calibrate_dark();
-    ESP_LOGI(TAG, "cmd_calibrate_sensor: dark_mean=%d  threshold=%d",
-             dark, sensor_.get_threshold());
-}
+    // Prevent tick() from running while we drive the motor.
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    cal_mode_ = true;
+    xSemaphoreGive(mutex_);
 
-int ClockManager::cmd_measure_sensor_average()
-{
-    ESP_LOGI(TAG, "cmd_measure_sensor_average: measuring...");
+    ESP_LOGI(TAG, "cmd_calibrate_sensor_safe: advancing ring 10 min, sampling ambient...");
+
+    // Advance the ring 10 clock-minutes, collecting 128 ADC samples spread
+    // evenly across the full travel.  This averages out position-dependent
+    // external-light variation and dilutes the slot reflection (a high outlier)
+    // to a small fraction of the dataset that the trimmed mean discards.
+    const int MAX_SAMPLES = 128;
+    const int TOTAL_STEPS = STEPS_PER_CLOCK_MINUTE * 10;
+    const int CHUNK       = TOTAL_STEPS / MAX_SAMPLES;   // ~47 half-steps each
+
+    int buf[MAX_SAMPLES];
+
     sensor_.led_on();
-    int avg = sensor_.read_average(SENSOR_CALIB_SAMPLES);
+    for (int i = 0; i < MAX_SAMPLES; ++i) {
+        motor_.microstep_n(CHUNK, StepDirection::FORWARD);
+        buf[i] = sensor_.read_raw();
+    }
     sensor_.led_off();
-    last_sensor_adc_ = avg;
-    ESP_LOGI(TAG, "cmd_measure_sensor_average: avg=%d  threshold=%d",
-             avg, sensor_.get_threshold());
-    return avg;
+
+    sensor_.calibrate_from_samples(buf, MAX_SAMPLES);
+
+    // Update the tracked displayed position for the 10-minute advance.
+    for (int i = 0; i < 10; ++i) {
+        displayed_minute_ = (displayed_minute_ + 1) % 60;
+        if (displayed_minute_ == 0 && displayed_hour_ >= 0)
+            displayed_hour_ = (displayed_hour_ + 1) % 12;
+    }
+    ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+
+    ESP_LOGI(TAG, "cmd_calibrate_sensor_safe: dark_mean=%d  threshold=%d  pos=%02d:%02d",
+             sensor_.get_dark_mean(), sensor_.get_threshold(),
+             displayed_hour_, displayed_minute_);
+
+    cal_mode_ = false;
 }
 
-void ClockManager::cmd_set_sensor_offset(int seconds_offset)
+void ClockManager::cmd_start_offset_cal()
 {
-    sensor_offset_sec_ = seconds_offset;
+    // Acquire mutex to wait for any in-progress tick to complete, then set the
+    // cal_mode_ flag so tick() won't run while we're calibrating.
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    cal_mode_  = true;
+    cal_phase_ = CalPhase::MOVING_TO_SLOT;
+    cal_steps_from_trigger_ = 0;
+    xSemaphoreGive(mutex_);
+
+    ESP_LOGI(TAG, "cmd_start_offset_cal: searching for slot...");
+
+    // Advance the motor slowly, checking the sensor every few steps.
+    // Search up to 30 full clock-minutes of travel.
+    const int MAX_STEPS    = STEPS_PER_CLOCK_MINUTE * 30;
+    const int POLL_EVERY   = 10;   // half-steps between sensor checks
+    bool found = false;
+
+    for (int s = 0; s < MAX_STEPS; s += POLL_EVERY) {
+        motor_.microstep_n(POLL_EVERY, StepDirection::FORWARD);
+        if (sensor_.is_triggered()) {
+            found = true;
+            break;
+        }
+    }
+
+    if (found) {
+        cal_phase_ = CalPhase::SLOT_FOUND;
+        ESP_LOGI(TAG, "cmd_start_offset_cal: slot found — step hand to 12:00 then call finish");
+    } else {
+        cal_phase_ = CalPhase::NOT_FOUND;
+        cal_mode_  = false;   // re-enable tick on failure
+        ESP_LOGW(TAG, "cmd_start_offset_cal: slot not found within %d steps", MAX_STEPS);
+    }
+}
+
+void ClockManager::cmd_finish_offset_cal()
+{
+    if (cal_phase_ != CalPhase::SLOT_FOUND) {
+        ESP_LOGW(TAG, "cmd_finish_offset_cal: not in SLOT_FOUND phase — ignored");
+        return;
+    }
+
+    sensor_offset_steps_ = cal_steps_from_trigger_;
+
     ClockCfg cc;
     ConfigStore::load(cc);
-    cc.sensor_offset = sensor_offset_sec_;
+    cc.sensor_offset_steps = sensor_offset_steps_;
     ConfigStore::save(cc);
-    ESP_LOGI(TAG, "cmd_set_sensor_offset: offset=%d s  (saved)", sensor_offset_sec_);
+
+    ESP_LOGI(TAG, "cmd_finish_offset_cal: offset=%d steps (saved)", sensor_offset_steps_);
+
+    cal_phase_ = CalPhase::IDLE;
+    cal_mode_  = false;
+}
+
+void ClockManager::cmd_abort_offset_cal()
+{
+    ESP_LOGI(TAG, "cmd_abort_offset_cal: calibration cancelled");
+    cal_phase_ = CalPhase::IDLE;
+    cal_mode_  = false;
 }
 
 void ClockManager::cmd_test_advance()
@@ -434,13 +526,34 @@ void ClockManager::cmd_test_advance()
     xSemaphoreGive(mutex_);
 }
 
+void ClockManager::cmd_test_reverse()
+{
+    ESP_LOGI(TAG, "cmd_test_reverse: forcing one-minute reverse");
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    motor_.move_clock_minutes(-1);
+    if (displayed_minute_ >= 0) {
+        displayed_minute_ = (displayed_minute_ + 59) % 60;  // subtract 1, wrap
+        if (displayed_minute_ == 59 && displayed_hour_ >= 0)
+            displayed_hour_ = (displayed_hour_ + 11) % 12;  // subtract 1, wrap
+    }
+    ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+    xSemaphoreGive(mutex_);
+}
+
+void ClockManager::cmd_cancel_move()
+{
+    motor_.request_cancel();
+    ESP_LOGI(TAG, "cmd_cancel_move: cancel requested");
+}
+
 void ClockManager::cmd_status()
 {
     ESP_LOGI(TAG, "──── ClockManager Status ────────────────────────────");
     ESP_LOGI(TAG, "  Running         : %s", is_running()    ? "yes" : "no");
     ESP_LOGI(TAG, "  Time valid      : %s", is_time_valid() ? "yes" : "no");
     ESP_LOGI(TAG, "  Displayed pos   : %02d:%02d", displayed_hour_, displayed_minute_);
-    ESP_LOGI(TAG, "  Sensor offset   : %d s", sensor_offset_sec_);
+    ESP_LOGI(TAG, "  Sensor offset   : %d steps", sensor_offset_steps_);
+    ESP_LOGI(TAG, "  Cal phase       : %d", static_cast<int>(cal_phase_));
     ESP_LOGI(TAG, "  Sensor threshold: %d", sensor_.get_threshold());
     ESP_LOGI(TAG, "  Sensor dark mean: %d", sensor_.get_dark_mean());
     ESP_LOGI(TAG, "  Motor powered   : %s", motor_.is_powered() ? "yes" : "no");
@@ -450,6 +563,115 @@ void ClockManager::cmd_status()
         ESP_LOGI(TAG, "  Local time      : %s", time_full().c_str());
     }
     ESP_LOGI(TAG, "─────────────────────────────────────────────────────");
+}
+
+void ClockManager::cmd_sensor_read(int n)
+{
+    int thr = sensor_.get_threshold();
+    printf("\r\nSensor live readings   mean=%d  threshold=%d\r\n",
+           sensor_.get_dark_mean(), thr);
+    printf("  Manually rotate ring through the slot to see ADC spike.\r\n");
+    printf("  Press any key in terminal to stop early.\r\n\r\n");
+    printf("  %-4s  %-6s  %-8s  %s\r\n", "#", "ADC", "trigger?", "level (0–4095)");
+    printf("  %s\r\n", "─────────────────────────────────────────────────────");
+
+    sensor_.led_on();
+    for (int i = 0; i < n; ++i) {
+        int  val  = sensor_.read_raw();
+        bool trig = (val > thr);
+
+        // Scale to a 40-char bar
+        int bar_len = (val * 40) / 4095;
+        if (bar_len < 0)  bar_len = 0;
+        if (bar_len > 40) bar_len = 40;
+
+        char bar[42] = {};
+        for (int b = 0; b < bar_len; ++b) bar[b] = (trig ? '#' : '=');
+
+        printf("  %-4d  %-6d  %-8s  |%s\r\n",
+               i + 1, val, trig ? "YES <<<" : "no", bar);
+
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    sensor_.led_off();
+    printf("\r\n");
+}
+
+void ClockManager::cmd_sensor_read_single()
+{
+    sensor_.led_on();
+    last_sensor_adc_ = sensor_.read_raw();
+    sensor_.led_off();
+    ESP_LOGI(TAG, "sensor-read-single: adc=%d  threshold=%d  triggered=%s",
+             last_sensor_adc_, sensor_.get_threshold(),
+             last_sensor_adc_ > sensor_.get_threshold() ? "YES" : "no");
+}
+
+void ClockManager::cmd_sensor_scan(int minutes)
+{
+    if (minutes < 1)  minutes = 1;
+    if (minutes > 60) minutes = 60;
+
+    // Prevent tick while motor is moving.
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    cal_mode_ = true;
+    xSemaphoreGive(mutex_);
+
+    scanning_   = true;
+    scan_count_ = 0;
+
+    int thr         = sensor_.get_threshold();
+    int total_steps = STEPS_PER_CLOCK_MINUTE * minutes;
+    const int CHUNK = 200;   // half-steps between readings
+
+    printf("\r\nSensor scan  (%d minutes, %d steps)   mean=%d  threshold=%d\r\n",
+           minutes, total_steps, sensor_.get_dark_mean(), thr);
+    printf("  %-6s  %-6s  %-8s  %s\r\n", "step", "ADC", "trigger?", "level (0-4095)");
+    printf("  %s\r\n", "-----------------------------------------------------");
+
+    sensor_.led_on();
+    int steps_done = 0;
+    while (steps_done < total_steps) {
+        int move = (total_steps - steps_done < CHUNK)
+                   ? (total_steps - steps_done) : CHUNK;
+        motor_.microstep_n(move, StepDirection::FORWARD);
+        steps_done += move;
+
+        int  val  = sensor_.read_raw();
+        bool trig = (val > thr);
+
+        last_sensor_adc_ = val;
+
+        // Store in scan buffer (capped at SCAN_BUF_SIZE)
+        if (scan_count_ < SCAN_BUF_SIZE) {
+            scan_buf_[scan_count_].step = steps_done;
+            scan_buf_[scan_count_].adc  = val;
+            ++scan_count_;
+        }
+
+        int bar_len = (val * 40) / 4095;
+        if (bar_len < 0)  bar_len = 0;
+        if (bar_len > 40) bar_len = 40;
+
+        char bar[42] = {};
+        for (int b = 0; b < bar_len; ++b) bar[b] = (trig ? '#' : '=');
+
+        printf("  %-6d  %-6d  %-8s  |%s\r\n",
+               steps_done, val, trig ? "YES <<<" : "no", bar);
+    }
+    sensor_.led_off();
+    printf("\r\n");
+
+    // Update tracked position.
+    for (int i = 0; i < minutes; ++i) {
+        displayed_minute_ = (displayed_minute_ + 1) % 60;
+        if (displayed_minute_ == 0 && displayed_hour_ >= 0)
+            displayed_hour_ = (displayed_hour_ + 1) % 12;
+    }
+    ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+
+    scanning_ = false;
+    cal_mode_ = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

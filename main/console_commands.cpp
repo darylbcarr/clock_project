@@ -103,17 +103,19 @@ static void do_help()
 {
     uart_puts(
         "\r\nAvailable commands:\r\n"
-        "  calibrate               Measure dark baseline, set sensor threshold\r\n"
-        "  measure                 Print average sensor ADC reading\r\n"
-        "  set-offset <seconds>    Sensor-to-hour offset in seconds\r\n"
+        "  calibrate               Advance ring 10 min, measure dark baseline\r\n"
+        "  sensor-read [n]         Print n live ADC readings (LED on, 200ms each)\r\n"
+        "  sensor-scan [minutes]   Drive ring, print ADC profile (default 20 min)\r\n"
+        "  start-offset-cal        Find slot, then microstep hand to 12:00\r\n"
+        "  finish-offset-cal       Save current step count as slot offset\r\n"
+        "  abort-offset-cal        Cancel offset calibration\r\n"
         "  set-clock <HH> <MM>     Manually set system time (bypasses SNTP)\r\n"
-        "  set-time [<minute>]     Move hand to match system time (0-59)\r\n"
+        "  set-time [HH MM]        Move hand to match system time\r\n"
         "  microstep <n> [fwd|bwd] Fine-adjust hand by N half-steps\r\n"
         "  advance                 Force one test minute advance\r\n"
         "  status                  Print clock manager status\r\n"
         "  sync-status             Show time sync / SNTP state\r\n"
         "  net-status              Show network status (IP, geo, RSSI, etc.)\r\n"
-        // "  enc-test [n]            Poll encoder n times (default 100, 50ms each)\r\n"
         "  i2c-scan                Scan I2C bus and print responding addresses\r\n"
         "  time [<fmt>]            Print current time (optional strftime format)\r\n"
         "  matter-pair             Reopen BLE commissioning window (fast advertising)\r\n"
@@ -224,17 +226,30 @@ static void dispatch(char* line)
     const char* cmd = argv[0];
 
     if (strcmp(cmd, "calibrate") == 0) {
-        s_clock->cmd_calibrate_sensor();
+        s_clock->cmd_calibrate_sensor_safe();
         return;
     }
-    if (strcmp(cmd, "measure") == 0) {
-        int avg = s_clock->cmd_measure_sensor_average();
-        uart_printf("Sensor avg: %d\r\n", avg);
+    if (strcmp(cmd, "sensor-read") == 0) {
+        int n = (argc >= 2) ? atoi(argv[1]) : 30;
+        if (n < 1 || n > 200) n = 30;
+        s_clock->cmd_sensor_read(n);
         return;
     }
-    if (strcmp(cmd, "set-offset") == 0) {
-        if (argc < 2) { uart_puts("Usage: set-offset <seconds>\r\n"); return; }
-        s_clock->cmd_set_sensor_offset(atoi(argv[1]));
+    if (strcmp(cmd, "sensor-scan") == 0) {
+        int minutes = (argc >= 2) ? atoi(argv[1]) : 20;
+        s_clock->cmd_sensor_scan(minutes);
+        return;
+    }
+    if (strcmp(cmd, "start-offset-cal") == 0) {
+        s_clock->cmd_start_offset_cal();
+        return;
+    }
+    if (strcmp(cmd, "finish-offset-cal") == 0) {
+        s_clock->cmd_finish_offset_cal();
+        return;
+    }
+    if (strcmp(cmd, "abort-offset-cal") == 0) {
+        s_clock->cmd_abort_offset_cal();
         return;
     }
     if (strcmp(cmd, "set-clock") == 0) {

@@ -84,7 +84,7 @@ Display and Encoder share one physical I2C bus (GPIO8/9). `Display` owns the `i2
 |--------|------|
 | Stepper IN1–IN4 | 16, 15, 7, 6 |
 | LED (sensor) | 13 |
-| LDR (ADC) | 14 |
+| LDR (ADC) | 14 (ADC2_CH3 — ADC2 works fine on ESP32-S3 with WiFi active) |
 | I2C SDA | 8 |
 | I2C SCL | 9 |
 | Display (SSD1306) | 0x3C |

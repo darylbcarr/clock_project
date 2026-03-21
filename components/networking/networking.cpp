@@ -292,7 +292,7 @@ void Networking::on_got_ip(esp_netif_ip_info_t* ip_info)
     // inside the event handler callback (mdns_init registers its own event
     // handlers and blocks briefly; doing so here can deadlock the event loop).
     xTaskCreate(geo_task,  "geo",      6144, this, 4, nullptr);
-    xTaskCreate(mdns_task, "net_mdns", 4096, this, 3, nullptr);
+    xTaskCreate(mdns_task, "net_mdns", 5120, this, 3, nullptr);
 }
 
 void Networking::on_wifi_disconnected()
@@ -332,16 +332,6 @@ void Networking::on_wifi_disconnected()
 
 void Networking::start_mdns()
 {
-    // On the Matter WiFi path (ssid_ is empty), only start mDNS when the device
-    // is already commissioned.  During first-time BLE commissioning, CHIP's minimal
-    // mDNS and our mdns_init() both bind to 224.0.0.251:5353, exhausting CHIP's
-    // packet buffers and killing the BLE handshake (PacketBuffer: pool EMPTY).
-    // After commissioning, BLE is inactive on reboot so both stacks coexist safely.
-    if (ssid_[0] == '\0' && !matter_commissioned_) {
-        ESP_LOGI(TAG, "mDNS: skipped (Matter first-time commissioning — BLE active)");
-        return;
-    }
-
     // Derive hostname: saved hint → fall back to "clock_XXXX" from last 2 MAC bytes.
     char hostname[32] = {};
     if (mdns_hostname_hint_[0] != '\0') {
@@ -352,33 +342,184 @@ void Networking::start_mdns()
         snprintf(hostname, sizeof(hostname), "clock_%02x%02x", mac[4], mac[5]);
     }
 
+    // With CONFIG_USE_MINIMAL_MDNS=n, Matter calls mdns_init() via EspDnssdInit()
+    // during chip::Server::Init() (at boot, before WiFi connects).  Our call here
+    // gets ESP_ERR_INVALID_STATE on the Matter path — that is expected and correct.
+    // On the direct-WiFi path (no Matter), our call succeeds and we own mDNS.
     esp_err_t err = mdns_init();
+    const bool we_own = (err == ESP_OK);
+
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "mDNS init failed: %s", esp_err_to_name(err));
         return;
     }
 
-    // mdns_init() is called after IP_EVENT_STA_GOT_IP already fired, so the
-    // mDNS task's PCB is still disabled (it missed the IP event).  Enable it
-    // explicitly BEFORE setting the hostname so that mdns_hostname_set()
-    // triggers the probe+announce cycle on the now-active STA interface.
-    if (netif_) {
-        mdns_netif_action(netif_, MDNS_EVENT_ENABLE_IP4);
+    if (we_own) {
+        // Our mdns_init() was called after the IP event already fired, so the
+        // predef handler missed it — enable the PCB explicitly.
+        if (netif_) {
+            mdns_netif_action(netif_, MDNS_EVENT_ENABLE_IP4);
+        }
+        // ── Set hostname as global ────────────────────────────────────────────
+        mdns_hostname_set(hostname);
+        mdns_instance_name_set(hostname);
+        ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
+
+        // Register HTTP service (SRV target = our hostname).
+        esp_err_t svc = mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
+        if (svc != ESP_OK && svc != ESP_ERR_INVALID_ARG) {
+            ESP_LOGW(TAG, "mdns_service_add: %s", esp_err_to_name(svc));
+        }
+
+        // ── Matter path race: chip[DIS] will overwrite our global hostname ────
+        // When ssid_ is empty, Matter manages WiFi. Our mdns_init() occasionally
+        // wins the race against chip[DIS]'s init, so we land here even though
+        // chip[DIS] will later call mdns_hostname_set("chip-XXXXXXXXXXXX...").
+        // That overwrites our global hostname, making "testa.local" unreachable.
+        // Poll for that change and immediately re-register our name as a delegate.
+        if (ssid_[0] == '\0') {
+            ESP_LOGI(TAG, "mDNS: Matter path — polling for chip[DIS] hostname override");
+            for (int i = 0; i < 300; ++i) {   // 300 × 100 ms = 30 s max
+                vTaskDelay(pdMS_TO_TICKS(100));
+                char cur[MDNS_NAME_BUF_LEN] = {};
+                if (mdns_hostname_get(cur) == ESP_OK &&
+                        cur[0] != '\0' &&
+                        strcasecmp(cur, hostname) != 0) {
+                    ESP_LOGI(TAG, "mDNS: chip[DIS] set hostname '%s'; registering "
+                             "'%s' as delegate", cur, hostname);
+                    esp_netif_ip_info_t ip_info = {};
+                    if (netif_ && esp_netif_get_ip_info(netif_, &ip_info) == ESP_OK
+                            && ip_info.ip.addr != 0) {
+                        mdns_ip_addr_t ip_entry = {};
+                        ip_entry.addr.type       = ESP_IPADDR_TYPE_V4;
+                        ip_entry.addr.u_addr.ip4 = ip_info.ip;
+                        ip_entry.next            = nullptr;
+                        esp_err_t dh = mdns_delegate_hostname_add(hostname, &ip_entry);
+                        vTaskDelay(pdMS_TO_TICKS(200));
+                        bool exists = mdns_hostname_exists(hostname);
+                        ESP_LOGI(TAG, "mDNS delegate '%s.local' → %s (exists=%d)",
+                                 hostname, status_.local_ip, (int)exists);
+                        if (!exists) {
+                            ESP_LOGW(TAG, "mDNS delegate not confirmed — watchdog will retry");
+                        }
+                        (void)dh;
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        // ── Matter path: Matter owns mDNS hostname (operational node ad) ─────
+        // Register our custom name as a *delegated* hostname so that
+        // clock.local (or whatever the user chose) resolves to the device IP
+        // without touching the main hostname that Matter's chip[DIS] uses.
+        //
+        // WHY THE DELAY:
+        // Delegate hostnames only respond when the mDNS PCB is past PROBE_3
+        // (mdns_priv_pcb_is_after_probing() returns true from ANNOUNCE_1 onward).
+        // The PCB probe cycle (~870ms to ANNOUNCE_1, ~3.1s to RUNNING) starts when
+        // WiFi connects.  We wait 5 seconds to make sure it reaches RUNNING before
+        // registering the delegate.
+        //
+        // Note: the EspDnssdPublishService() dedup patches (hostname + service)
+        // in ESP32DnssdImpl.cpp prevent chip[DIS] from restarting the PCB probe
+        // cycle on subsequent Advertise() calls once the service already exists.
+        //
+        // NOTE: register the _http service NOW (before the delay) so it is
+        // included in the initial probe cycle and does not restart the PCB
+        // after we add the delegate.
+        {
+            esp_err_t svc = mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
+            if (svc != ESP_OK && svc != ESP_ERR_INVALID_ARG) {
+                ESP_LOGW(TAG, "mdns_service_add: %s", esp_err_to_name(svc));
+            }
+        }
+
+        // Additionally: mdns_receive.c is_ours() requires the global hostname
+        // (set by chip[DIS] via mdns_hostname_set) to be non-empty before it will
+        // respond to ANY host query including delegates.  Poll for it first.
+
+        // Step 1: confirm chip[DIS] has set the global hostname (up to 5 s).
+        bool hostname_ready = false;
+        {
+            char global_host[MDNS_NAME_BUF_LEN] = {};
+            for (int i = 0; i < 50; ++i) {
+                if (mdns_hostname_get(global_host) == ESP_OK && global_host[0] != '\0') {
+                    hostname_ready = true;
+                    ESP_LOGI(TAG, "mDNS: global hostname '%s' confirmed (chip[DIS])", global_host);
+                    break;
+                }
+                global_host[0] = '\0';
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            if (!hostname_ready) {
+                ESP_LOGW(TAG, "mDNS: global hostname not set after 5 s — skipping delegate");
+            }
+        }
+
+        if (hostname_ready) {
+            // Step 2: wait for PCB probe cycle to complete.
+            // The probe cycle starts at WiFi connect and reaches RUNNING in ~3.1 s.
+            // 5 s gives comfortable margin.
+            ESP_LOGI(TAG, "mDNS: waiting 5 s for PCB probe cycle to complete...");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+
+            // Step 3: read IP now (after the delay, in case DHCP renewed).
+            esp_netif_ip_info_t ip_info = {};
+            if (netif_ && esp_netif_get_ip_info(netif_, &ip_info) == ESP_OK
+                    && ip_info.ip.addr != 0) {
+                mdns_ip_addr_t ip_entry = {};
+                ip_entry.addr.type       = ESP_IPADDR_TYPE_V4;
+                ip_entry.addr.u_addr.ip4 = ip_info.ip;
+                ip_entry.next            = nullptr;
+                mdns_delegate_hostname_remove(hostname); // clean up stale entry on reconnect
+                esp_err_t dh = mdns_delegate_hostname_add(hostname, &ip_entry);
+                if (dh != ESP_OK) {
+                    ESP_LOGW(TAG, "mDNS delegate add failed: %s", esp_err_to_name(dh));
+                } else {
+                    // Brief yield so the ADD action is processed before we read back.
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    bool exists = mdns_hostname_exists(hostname);
+                    ESP_LOGI(TAG, "mDNS delegate '%s.local' → %s (exists=%d)",
+                             hostname, status_.local_ip, (int)exists);
+                    if (!exists) {
+                        ESP_LOGW(TAG, "mDNS delegate NOT confirmed in host_list — "
+                                 "watchdog will retry");
+                    }
+                }
+            } else {
+                ESP_LOGW(TAG, "mDNS: no IP after delay — delegate not registered");
+            }
+        }
     }
 
-    mdns_hostname_set(hostname);
-    mdns_instance_name_set(hostname);
-    mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
-
     strncpy(status_.mdns_hostname, hostname, sizeof(status_.mdns_hostname) - 1);
-    ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
 }
 
 void Networking::set_mdns_hostname(const char* name)
 {
     if (!name || name[0] == '\0') return;
-    strncpy(mdns_hostname_hint_, name, sizeof(mdns_hostname_hint_) - 1);  // survive reconnect
-    mdns_hostname_set(name);
+
+    if (ssid_[0] == '\0') {
+        // Matter path: operate on the delegated hostname, not the main hostname.
+        if (mdns_hostname_hint_[0] != '\0') {
+            mdns_delegate_hostname_remove(mdns_hostname_hint_);
+        }
+        esp_netif_ip_info_t ip_info = {};
+        if (netif_ && esp_netif_get_ip_info(netif_, &ip_info) == ESP_OK
+                && ip_info.ip.addr != 0) {
+            mdns_ip_addr_t ip_entry = {};
+            ip_entry.addr.type       = ESP_IPADDR_TYPE_V4;
+            ip_entry.addr.u_addr.ip4 = ip_info.ip;
+            ip_entry.next            = nullptr;
+            mdns_delegate_hostname_add(name, &ip_entry);
+        }
+    } else {
+        // Direct WiFi: we own the hostname.
+        mdns_hostname_set(name);
+    }
+
+    strncpy(mdns_hostname_hint_, name, sizeof(mdns_hostname_hint_) - 1);
     strncpy(status_.mdns_hostname, name, sizeof(status_.mdns_hostname) - 1);
     ESP_LOGI(TAG, "mDNS hostname updated: %s.local", name);
 }
@@ -405,7 +546,43 @@ void Networking::geo_task(void* arg)
 
 void Networking::mdns_task(void* arg)
 {
-    static_cast<Networking*>(arg)->start_mdns();
+    auto* self = static_cast<Networking*>(arg);
+    self->start_mdns();
+
+    // On the Matter path, become a watchdog: re-register the delegate hostname
+    // every 30 s if something (mDNS re-init, PCB restart, Matter re-advertise)
+    // ever removes it.  This is the recovery path that covers all unknown removal
+    // scenarios without needing to pinpoint the exact culprit.
+    if (self->ssid_[0] == '\0') {
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(10000));
+
+            const char* hostname = self->status_.mdns_hostname;
+            if (hostname[0] == '\0') continue;
+
+            if (!mdns_hostname_exists(hostname)) {
+                ESP_LOGW(TAG, "mDNS delegate '%s' gone — re-registering", hostname);
+                esp_netif_ip_info_t ip_info = {};
+                if (self->netif_ &&
+                        esp_netif_get_ip_info(self->netif_, &ip_info) == ESP_OK &&
+                        ip_info.ip.addr != 0) {
+                    mdns_ip_addr_t ip_entry = {};
+                    ip_entry.addr.type       = ESP_IPADDR_TYPE_V4;
+                    ip_entry.addr.u_addr.ip4 = ip_info.ip;
+                    ip_entry.next            = nullptr;
+                    esp_err_t dh = mdns_delegate_hostname_add(hostname, &ip_entry);
+                    ESP_LOGI(TAG, "mDNS delegate re-register '%s': %s",
+                             hostname, esp_err_to_name(dh));
+                } else {
+                    ESP_LOGW(TAG, "mDNS delegate watchdog: no IP yet, skipping");
+                }
+            } else {
+                ESP_LOGD(TAG, "mDNS delegate '%s' OK", hostname);
+            }
+        }
+        // unreachable — task never deletes itself on Matter path
+    }
+
     vTaskDelete(nullptr);
 }
 

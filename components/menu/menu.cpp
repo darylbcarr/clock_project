@@ -334,7 +334,7 @@ void Menu::show_clock_status(ClockManager &cm)
     display_.print(1, "------------");
     snprintf(buf, sizeof(buf), "Min: %d", cm.displayed_minute());
     display_.print(2, buf);
-    snprintf(buf, sizeof(buf), "Offset: %ds", cm.sensor_offset_sec());
+    snprintf(buf, sizeof(buf), "Offset:%dstep", cm.sensor_offset_steps());
     display_.print(3, buf);
     display_.print(4, cm.is_time_valid() ? "SNTP: synced" : "SNTP: no sync");
     display_.print(5, cm.time_hm().c_str());
@@ -1085,10 +1085,7 @@ void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
                                              { cm.cmd_microstep(8, false); }));
 
     clk->addChild(std::make_unique<MenuItem>("Cal Sensor", [&cm]()
-                                             { cm.cmd_calibrate_sensor(); }));
-
-    clk->addChild(std::make_unique<MenuItem>("Sensor Meas", [&cm]()
-                                             { cm.cmd_measure_sensor_average(); }));
+                                             { cm.cmd_calibrate_sensor_safe(); }));
 
     // ── Status ────────────────────────────────────────────────────────────────
     auto stat = std::make_unique<MenuItem>("Status");

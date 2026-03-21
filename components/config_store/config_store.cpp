@@ -28,7 +28,7 @@ bool ConfigStore::save(const ClockCfg& c)
 {
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    nvs_set_i32(h, "clk_sen_off",  c.sensor_offset);
+    nvs_set_i32(h, "clk_sen_stp",  c.sensor_offset_steps);
     nvs_set_u8 (h, "clk_mrev",     c.motor_reverse ? 1u : 0u);
     nvs_set_u32(h, "clk_step_us",  c.step_delay_us);
     nvs_set_i32(h, "clk_dmin",     c.disp_minute);
@@ -43,7 +43,7 @@ bool ConfigStore::load(ClockCfg& c)
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return false;
     int32_t i32; uint8_t u8; uint32_t u32;
-    if (nvs_get_i32(h, "clk_sen_off", &i32) == ESP_OK) c.sensor_offset = i32;
+    if (nvs_get_i32(h, "clk_sen_stp", &i32) == ESP_OK) c.sensor_offset_steps = i32;
     if (nvs_get_u8 (h, "clk_mrev",    &u8)  == ESP_OK) c.motor_reverse = (u8 != 0);
     if (nvs_get_u32(h, "clk_step_us", &u32) == ESP_OK) c.step_delay_us = u32;
     if (nvs_get_i32(h, "clk_dmin",    &i32) == ESP_OK) c.disp_minute   = i32;

@@ -3,16 +3,6 @@
 /**
  * @file clock_manager.h
  * @brief Clock management: time sync, hand positioning, sensor calibration
- *
- * Responsibilities
- * ────────────────
- * • Obtain real time via SNTP (delegated to networking component later).
- * • Track current displayed time (minute hand position).
- * • Drive the stepper motor once per minute (or on-demand for testing).
- * • Monitor the position sensor to detect the minute hand at the top-of-hour
- *   reference position and correct drift.
- * • Expose command functions used by the CLI / UART console.
- * • Provide time-string formatting helpers.
  */
 
 #include <ctime>
@@ -26,12 +16,8 @@
 
 // ── Clock configuration constants ────────────────────────────────────────────
 
-/// How long after top-of-hour the sensor window is open (seconds).
-/// The hand must pass the sensor within this window to count as on-time.
+/// Window around top-of-hour (seconds either side) when sensor correction runs.
 static constexpr int SENSOR_WINDOW_SECONDS = 30;
-
-/// Maximum drift correction in minutes before a full re-set is required.
-static constexpr int MAX_AUTO_CORRECT_MINUTES = 5;
 
 /// NTP server list (primary, fallback)
 static constexpr const char* NTP_SERVER_1 = "pool.ntp.org";
@@ -40,214 +26,183 @@ static constexpr const char* NTP_SERVER_2 = "time.google.com";
 /// Default timezone string (POSIX TZ).  Updated by networking component.
 static constexpr const char* DEFAULT_TZ = "UTC0";
 
-// ── Sensor trigger result ─────────────────────────────────────────────────────
-struct SensorTriggerInfo {
-    bool     triggered;          ///< Was the sensor tripped this minute?
-    int64_t  trigger_time_us;    ///< esp_timer_get_time() at trigger
-    int      seconds_from_hour;  ///< Seconds after the hour when triggered
-    int      error_seconds;      ///< Positive = hand late; negative = early
+// ── Calibration phase ────────────────────────────────────────────────────────
+enum class CalPhase {
+    IDLE,            ///< Not calibrating
+    MOVING_TO_SLOT,  ///< Motor advancing to find sensor trigger
+    SLOT_FOUND,      ///< Slot found; user should step hand to 12:00 then save
+    NOT_FOUND,       ///< Search exhausted without finding slot
 };
 
 // ── ClockManager class ────────────────────────────────────────────────────────
 class ClockManager {
 public:
-    /**
-     * @brief Construct and initialise hardware.
-     * @param motor_delay_us  Per-step delay forwarded to StepperMotor.
-     */
     explicit ClockManager(uint32_t motor_delay_us = DEFAULT_STEP_DELAY_US);
     ~ClockManager();
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Lifecycle
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * @brief Start the background clock tick task.
-     *        Call after SNTP / networking is ready.
-     */
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
     void start();
-
-    /**
-     * @brief Stop the background task gracefully.
-     */
     void stop();
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Time sync (called by networking component when connected)
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * @brief Set the POSIX timezone string.  Must be called before start().
-     * @param tz  e.g. "EST5EDT,M3.2.0,M11.1.0"
-     */
+    // ── Time sync (called by networking component) ────────────────────────────
     void set_timezone(const char* tz);
-
-    /**
-     * @brief Callback invoked by networking component once SNTP sync is done.
-     *        Stores the synced epoch and re-aligns the displayed minute.
-     */
     void on_time_synced();
-
-    /**
-     * @brief Returns true once a valid SNTP sync has been obtained.
-     */
     bool is_time_valid() const { return time_valid_; }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Command interface  (used by UART console / CLI)
-    // ──────────────────────────────────────────────────────────────────────────
+    // ── Command interface ─────────────────────────────────────────────────────
 
-    /**
-     * @brief CMD: Set the clock hands to align with current real time.
-     *        Treats the clock face as a 12-hour dial (720 positions) and
-     *        always moves forward.
-     *
-     * @param obs_hour  Hour the hand currently shows (0-11). -1 = use stored value.
-     * @param obs_min   Minute the hand currently shows (0-59). -1 = use stored value.
-     */
+    /** Set hands to current real time, moving forward from stored position. */
     void cmd_set_time(int obs_hour = -1, int obs_min = -1);
 
-    /**
-     * @brief CMD: Manually inject a wall-clock time without SNTP.
-     *        Useful for testing before networking is implemented.
-     *        Sets the system RTC via settimeofday() and marks time_valid_ = true
-     *        so cmd_set_time() will work normally afterwards.
-     *
-     * @param hour    Local hour   (0-23)
-     * @param minute  Local minute (0-59)
-     * @param second  Local second (0-59, default 0)
-     */
+    /** Inject wall-clock time manually (for testing without network). */
     void cmd_set_manual_time(int hour, int minute, int second = 0);
 
-    /**
-     * @brief CMD: Print a detailed sync / network status report.
-     *        Shows time_valid flag, current epoch, SNTP state, and
-     *        instructions for manual time entry when network is absent.
-     */
+    /** Print sync / network status report. */
     void cmd_sync_status();
 
     /**
-     * @brief CMD: Microstep the motor for fine hand adjustment.
-     * @param steps      Number of microsteps (half-steps).
-     * @param forward    true = forward, false = backward.
+     * @brief Microstep the motor N half-steps.
+     *        During SLOT_FOUND calibration, each call accumulates the step
+     *        count in cal_steps_from_trigger_ for later saving.
      */
     void cmd_microstep(int steps, bool forward = true);
 
     /**
-     * @brief CMD: Run sensor calibration to find the dark (no-hand) baseline.
-     *        Prints the result via ESP_LOGI.
+     * @brief Slot-safe dark baseline calibration.
+     *        Samples ADC with LED on (motor stationary), drops the top 25%
+     *        outliers (slot reflections), and sets the detection threshold.
+     *        Safe to call at any time; does not move the motor.
      */
-    void cmd_calibrate_sensor();
+    void cmd_calibrate_sensor_safe();
 
     /**
-     * @brief CMD: Measure average sensor reading with LED on (no hand present).
-     *        Returns the mean ADC value.
+     * @brief Begin guided offset calibration.
+     *        Suspends the clock tick, then steps the motor forward until the
+     *        sensor triggers (up to 2 full clock-minutes of travel).
+     *        On trigger: sets cal_phase_ = SLOT_FOUND and returns.
+     *        On timeout:  sets cal_phase_ = NOT_FOUND  and returns.
+     *        While in SLOT_FOUND, use cmd_microstep() to align the hand to
+     *        12:00, then call cmd_finish_offset_cal() to save.
      */
-    int cmd_measure_sensor_average();
+    void cmd_start_offset_cal();
 
     /**
-     * @brief CMD: User reports the number of seconds between the sensor
-     *        trigger and the actual top-of-hour.  This value is stored and
-     *        used to correct future triggers.
-     * @param seconds_offset  Positive = sensor fires N seconds before top-of-hour.
-     *                        Negative = sensor fires N seconds after.
+     * @brief Save the accumulated step count as the sensor offset and resume
+     *        normal clock operation.  Only valid when cal_phase_ == SLOT_FOUND.
      */
-    void cmd_set_sensor_offset(int seconds_offset);
+    void cmd_finish_offset_cal();
 
     /**
-     * @brief CMD: Force an immediate motor tick (advance one minute).
-     *        Useful for testing without waiting 60 seconds.
+     * @brief Cancel offset calibration without saving.  Resumes clock tick.
      */
+    void cmd_abort_offset_cal();
+
+    /** Force one-minute motor advance. */
     void cmd_test_advance();
 
+    /** Force one-minute motor reverse. */
+    void cmd_test_reverse();
+
     /**
-     * @brief CMD: Dump current status to log output.
+     * @brief Live sensor readings with LED on.
+     *        Prints n ADC values (200 ms apart) so you can manually sweep
+     *        the ring through the slot and see whether the reading spikes.
+     * @param n  Number of samples (default 30, ~6 seconds).
      */
+    void cmd_sensor_read(int n = 30);
+
+    /**
+     * @brief Take a single fresh ADC reading (LED on briefly) and store it
+     *        in last_sensor_adc_.  Used by the web UI "Read Now" button.
+     */
+    void cmd_sensor_read_single();
+
+    /**
+     * @brief Motor-driven sensor scan.
+     *        Advances the ring the requested number of minutes while printing
+     *        the ADC reading every ~200 steps.  Results are also stored in
+     *        scan_buf_ for retrieval via the web UI.
+     * @param minutes  Minutes of travel to scan (default 20, ~24 seconds).
+     */
+    void cmd_sensor_scan(int minutes = 20);
+
+    // ── Scan results (filled by cmd_sensor_scan) ──────────────────────────────
+    struct ScanEntry { int step; int adc; };
+    static constexpr int SCAN_BUF_SIZE = 128;
+
+    /** Number of valid entries in the scan buffer (0 if no scan run yet). */
+    int  scan_count()       const { return scan_count_; }
+    bool is_scanning()      const { return scanning_; }
+    /** Pointer to the scan results array (scan_count() valid entries). */
+    const ScanEntry* scan_results() const { return scan_buf_; }
+
+    /** Request cancellation of an in-progress cmd_set_time() move. */
+    void cmd_cancel_move();
+
+    /** Dump current status to log. */
     void cmd_status();
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Time formatting helpers
-    // ──────────────────────────────────────────────────────────────────────────
+    /** True while cmd_set_time() is driving the motor. */
+    bool is_motor_busy() const { return motor_.is_busy(); }
 
-    /**
-     * @brief Format the current local time using a strftime format string.
-     * @param fmt  strftime format, e.g. "%H:%M:%S" or "%I:%M %p".
-     * @return Formatted string.
-     */
+    // ── Time formatting ───────────────────────────────────────────────────────
     std::string format_time(const char* fmt) const;
+    std::string time_hms()     const { return format_time("%H:%M:%S"); }
+    std::string time_hm()      const { return format_time("%H:%M"); }
+    std::string time_12h()     const { return format_time("%I:%M %p"); }
+    std::string time_full()    const { return format_time("%c"); }
+    std::string time_iso8601() const { return format_time("%Y-%m-%dT%H:%M:%S"); }
+    std::string date_long()    const { return format_time("%A, %d %B %Y"); }
+    std::string date_short()   const { return format_time("%Y-%m-%d"); }
+    struct tm   get_local_tm() const;
+    time_t      get_epoch()    const { return time(nullptr); }
 
-    /** @brief  "HH:MM:SS"  (24-hour) */
-    std::string time_hms()         const { return format_time("%H:%M:%S"); }
+    // ── Getters ───────────────────────────────────────────────────────────────
+    int       displayed_minute()     const { return displayed_minute_; }
+    int       displayed_hour()       const { return displayed_hour_; }
+    int       sensor_offset_steps()  const { return sensor_offset_steps_; }
+    int       sensor_dark_mean()     const { return sensor_.get_dark_mean(); }
+    int       sensor_threshold()     const { return sensor_.get_threshold(); }
+    int       last_sensor_adc()      const { return last_sensor_adc_; }
+    CalPhase  cal_phase()            const { return cal_phase_; }
+    int       cal_steps()            const { return cal_steps_from_trigger_; }
+    bool      is_running()           const { return task_handle_ != nullptr; }
 
-    /** @brief  "HH:MM"  (24-hour, no seconds) */
-    std::string time_hm()          const { return format_time("%H:%M"); }
-
-    /** @brief  "hh:MM AM/PM" */
-    std::string time_12h()         const { return format_time("%I:%M %p"); }
-
-    /** @brief  "Www Mmm DD HH:MM:SS YYYY" */
-    std::string time_full()        const { return format_time("%c"); }
-
-    /** @brief  ISO-8601 "YYYY-MM-DDTHH:MM:SS" */
-    std::string time_iso8601()     const { return format_time("%Y-%m-%dT%H:%M:%S"); }
-
-    /** @brief  "Weekday, DD Month YYYY" (human-friendly date) */
-    std::string date_long()        const { return format_time("%A, %d %B %Y"); }
-
-    /** @brief  "YYYY-MM-DD" */
-    std::string date_short()       const { return format_time("%Y-%m-%d"); }
-
-    /** @brief  Return current struct tm (local time). */
-    struct tm   get_local_tm()     const;
-
-    /** @brief  Current Unix epoch (UTC). */
-    time_t      get_epoch()        const { return time(nullptr); }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Getters
-    // ──────────────────────────────────────────────────────────────────────────
-    int  displayed_minute()   const { return displayed_minute_; }
-    int  displayed_hour()     const { return displayed_hour_; }
-    int  sensor_offset_sec()  const { return sensor_offset_sec_; }
-    bool is_running()         const { return task_handle_ != nullptr; }
-
-    void set_motor_reverse(bool rev) { motor_.set_reverse(rev); }
-    bool is_motor_reverse()    const { return motor_.is_reverse(); }
-
-    /** Last ADC value returned by cmd_measure_sensor_average(); 0 until first call. */
-    int  last_sensor_adc()     const { return last_sensor_adc_; }
-
-    /** Restore displayed position from NVS on boot (before start()). */
-    void set_displayed_minute(int m) { displayed_minute_ = m; }
-    void set_displayed_hour(int h)   { displayed_hour_ = h; }
-
-    /** Change per-step delay at runtime (persisted by caller). */
-    void set_step_delay_us(uint32_t us) { motor_.set_step_delay(us); }
-    uint32_t get_step_delay_us()  const { return motor_.get_step_delay(); }
+    void set_motor_reverse(bool rev)            { motor_.set_reverse(rev); }
+    bool is_motor_reverse()             const { return motor_.is_reverse(); }
+    void set_displayed_minute(int m)           { displayed_minute_ = m; }
+    void set_displayed_hour(int h)             { displayed_hour_ = h; }
+    void set_sensor_offset_steps(int steps)    { sensor_offset_steps_ = steps; }
+    void set_step_delay_us(uint32_t us)        { motor_.set_step_delay(us); }
+    uint32_t get_step_delay_us()        const { return motor_.get_step_delay(); }
 
 private:
-    // ── Internal helpers ────────────────────────────────────────────────────
-    void tick();                              ///< Called every minute by the timer task
-    void check_sensor_and_correct();         ///< Evaluate sensor near top-of-hour
-    void advance_one_minute();               ///< Move motor + update counter
+    void tick();
+    void check_sensor_and_correct();
+    void advance_one_minute();
+    static void clock_task(void* arg);
 
-    static void clock_task(void* arg);       ///< FreeRTOS task entry
-
-    // ── Hardware ────────────────────────────────────────────────────────────
     StepperMotor    motor_;
     PositionSensor  sensor_;
 
-    // ── State ────────────────────────────────────────────────────────────────
-    int     displayed_minute_;   ///< What minute the hand currently shows (0-59)
-    int     displayed_hour_;     ///< What hour the hand currently shows (0-11)
-    int     sensor_offset_sec_;  ///< User-calibrated sensor-to-hour offset (s)
-    int     last_sensor_adc_ = 0;
-    bool    time_valid_;
-    bool    running_;
-    bool    needs_sntp_sync_ = false;  ///< Set when SNTP syncs with a known hand position
+    int      displayed_minute_;
+    int      displayed_hour_;
+    int      sensor_offset_steps_;     ///< Steps from slot trigger to 12:00
+    int      last_sensor_adc_ = 0;
+    bool     time_valid_;
+    bool     running_;
+    bool     needs_sntp_sync_ = false;
 
-    // ── Task ────────────────────────────────────────────────────────────────
+    // ── Offset calibration state ─────────────────────────────────────────────
+    volatile bool cal_mode_ = false;   ///< Prevents tick() from running
+    CalPhase      cal_phase_           = CalPhase::IDLE;
+    int           cal_steps_from_trigger_ = 0;
+
+    // ── Scan results buffer ───────────────────────────────────────────────────
+    ScanEntry scan_buf_[SCAN_BUF_SIZE] = {};
+    int       scan_count_ = 0;
+    bool      scanning_   = false;
+
     TaskHandle_t      task_handle_;
     SemaphoreHandle_t mutex_;
 };
