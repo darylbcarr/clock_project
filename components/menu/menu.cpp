@@ -1065,7 +1065,9 @@ void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
 {
     leds_ = &leds;
 
-    auto root = std::make_unique<MenuItem>("Main");
+    char root_title[24];
+    snprintf(root_title, sizeof(root_title), "Main v%s", OtaManager::running_version());
+    auto root = std::make_unique<MenuItem>(root_title);
 
     // ── Clock ─────────────────────────────────────────────────────────────────
     auto clk = std::make_unique<MenuItem>("Clock");
