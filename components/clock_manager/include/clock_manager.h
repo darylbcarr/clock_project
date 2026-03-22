@@ -68,10 +68,17 @@ public:
     void cmd_microstep(int steps, bool forward = true);
 
     /**
-     * @brief Slot-safe dark baseline calibration.
-     *        Samples ADC with LED on (motor stationary), drops the top 25%
-     *        outliers (slot reflections), and sets the detection threshold.
-     *        Safe to call at any time; does not move the motor.
+     * @brief Static ambient calibration — does NOT move the motor.
+     *        Takes SENSOR_CALIB_SAMPLES ADC readings with LED on, trims
+     *        top-25% outliers, and sets the detection threshold.
+     *        Called automatically on every boot.
+     */
+    void calibrate_sensor_static();
+
+    /**
+     * @brief Full sweeping calibration — advances ring ~10 minutes while
+     *        sampling so ambient light is captured across the full ring arc.
+     *        Moves the motor; only call from the web UI or console, never on boot.
      */
     void cmd_calibrate_sensor_safe();
 

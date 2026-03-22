@@ -852,8 +852,10 @@ extern "C" void app_main()
     s_ota.start(s_display, [&]() { return s_net.is_connected(); });
 
     // ── 6. Sensor calibration + clock tick task ───────────────────────────────
-    ESP_LOGI(TAG, "Calibrating sensor...");
-    s_clock.cmd_calibrate_sensor_safe();
+    // Static ambient calibration only — does NOT move the motor.
+    // Use "Sample Background" in the web UI for the full 10-min sweeping calibration.
+    ESP_LOGI(TAG, "Calibrating sensor (static)...");
+    s_clock.calibrate_sensor_static();
     s_clock.start();
 
     // ── 7. Encoder poll task (priority 4) ─────────────────────────────────────

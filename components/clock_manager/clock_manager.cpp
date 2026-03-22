@@ -412,6 +412,14 @@ void ClockManager::cmd_microstep(int steps, bool forward)
     }
 }
 
+void ClockManager::calibrate_sensor_static()
+{
+    // Static calibration — no motor movement.  Safe to call on boot.
+    int mean = sensor_.calibrate_safe();
+    ESP_LOGI(TAG, "calibrate_sensor_static: dark_mean=%d  threshold=%d",
+             mean, sensor_.get_threshold());
+}
+
 void ClockManager::cmd_calibrate_sensor_safe()
 {
     // Prevent tick() from running while we drive the motor.
