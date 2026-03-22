@@ -134,17 +134,11 @@ static Menu::InputEvent input_poll_fn()
     Menu::InputEvent ev = {};
     ev.btnA = (gpio_get_level(BUTTON_A) == 0);
     ev.btnB = (gpio_get_level(BUTTON_B) == 0);
-    if (s_encoder_ok) {
-        SemaphoreHandle_t mtx = s_display.getBusMutex();
-        xSemaphoreTake(mtx, portMAX_DELAY);
-        ev.delta   = s_encoder.read_delta();
-        ev.enc_btn = s_encoder.button_pressed();
-        xSemaphoreGive(mtx);
-    }
 
     // ── Panic WiFi reset during blocking setup screens ────────────────────
-    // encoder_task has not started yet when first_time_setup() is running,
-    // so panic detection must live here.
+    // Checked BEFORE the encoder I2C read so it works even when the Seesaw
+    // chip is unresponsive and the I2C transaction hangs.  Only GPIO buttons
+    // are needed for A+B detection; encoder button is added below if I2C succeeds.
     //
     // Uses wall-clock time (tick count) so the 5 s threshold is accurate
     // even when input_poll_fn is not called at a fixed rate — e.g. the
@@ -156,8 +150,23 @@ static Menu::InputEvent input_poll_fn()
     static bool       s_panic_shown = false;
 
     bool both     = ev.btnA && ev.btnB;
-    bool enc_held = ev.enc_btn && s_encoder_ok;
-    bool held     = enc_held || both;
+    bool enc_held = false;   // updated below once encoder is read
+    bool held     = both;    // re-evaluated after encoder read
+
+    // ── Encoder read (I2C) — with timeout so a hung Seesaw can't block forever ──
+    if (s_encoder_ok) {
+        SemaphoreHandle_t mtx = s_display.getBusMutex();
+        if (xSemaphoreTake(mtx, pdMS_TO_TICKS(100)) == pdTRUE) {
+            ev.delta   = s_encoder.read_delta();
+            ev.enc_btn = s_encoder.button_pressed();
+            xSemaphoreGive(mtx);
+        } else {
+            ESP_LOGW("input", "I2C mutex timeout — encoder read skipped");
+        }
+    }
+
+    enc_held = ev.enc_btn && s_encoder_ok;
+    held     = enc_held || both;
 
     if (held) {
         if (s_panic_start == 0)
