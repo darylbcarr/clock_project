@@ -142,72 +142,157 @@ void ClockManager::tick()
     }
 
     struct tm t = get_local_tm();
-    ESP_LOGI(TAG, "Tick — real time: %02d:%02d:%02d",
-             t.tm_hour, t.tm_min, t.tm_sec);
+    ESP_LOGI(TAG, "Tick — real time: %02d:%02d:%02d  disp=%02d:%02d",
+             t.tm_hour, t.tm_min, t.tm_sec,
+             displayed_hour_, displayed_minute_);
 
-    // Sensor correction window: ±SENSOR_WINDOW_SECONDS around the top of the hour.
-    bool near_hour = (t.tm_min == 59 && t.tm_sec >= (60 - SENSOR_WINDOW_SECONDS))
-                  || (t.tm_min == 0  && t.tm_sec <= SENSOR_WINDOW_SECONDS);
-
-    if (near_hour && sensor_offset_steps_ > 0) {
-        // Replace the normal fixed advance with a step-by-step sensor search.
-        // This way the hand stops when the slot is found instead of overshooting it.
-        check_sensor_and_correct();
-    } else {
+    // ── A: sensor not calibrated ──────────────────────────────────────────────
+    if (sensor_offset_steps_ <= 0) {
         advance_one_minute();
+        xSemaphoreGive(mutex_);
+        return;
     }
 
-    xSemaphoreGive(mutex_);
-}
+    bool at_top_of_hour = (t.tm_min == 0);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor check & correction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void ClockManager::check_sensor_and_correct()
-{
-    // Advance step-by-step up to one clock-minute, watching for the slot.
-    // This replaces the normal fixed advance near the top of the hour so the
-    // hand stops when the slot is detected rather than overshooting it.
-    const int POLL_EVERY = 10;
-    const int MAX_SEARCH = STEPS_PER_CLOCK_MINUTE;
-
-    int  steps_moved = 0;
-    bool found       = false;
-
-    sensor_.led_on();
-    for (int s = 0; s < MAX_SEARCH && !found; s += POLL_EVERY) {
-        motor_.microstep_n(POLL_EVERY, StepDirection::FORWARD);
-        steps_moved += POLL_EVERY;
-        int raw = sensor_.read_raw();
-        last_sensor_adc_ = raw;
-        if (raw > sensor_.get_threshold()) {
-            found = true;
+    // ── B: fast correction — slot was found in a prior scan, now at :00 ───────
+    if (correction_pending_ && at_top_of_hour) {
+        // Motor is correction_accum_ steps past 12:00.  Move back.
+        if (correction_accum_ > 0) {
+            motor_.microstep_n(correction_accum_, StepDirection::BACKWARD);
+        } else if (correction_accum_ < 0) {
+            motor_.microstep_n(-correction_accum_, StepDirection::FORWARD);
         }
-    }
-    sensor_.led_off();
-
-    if (found) {
-        // Slot found — advance the calibrated offset to reach exactly 12:00.
-        motor_.move_steps(sensor_offset_steps_, StepDirection::FORWARD);
-        struct tm t = get_local_tm();
-        displayed_minute_ = 0;
         displayed_hour_   = t.tm_hour % 12;
+        displayed_minute_ = 0;
         ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
-        ESP_LOGI(TAG, "Sensor correction to %02d:00 (found after %d steps)",
-                 displayed_hour_, steps_moved);
-    } else {
-        // Slot not found within one minute of travel (clock is fast or
-        // sensor uncalibrated) — complete a normal 1-minute advance.
-        int remaining = STEPS_PER_CLOCK_MINUTE - steps_moved;
-        if (remaining > 0)
-            motor_.move_steps(remaining, StepDirection::FORWARD);
+        ESP_LOGI(TAG, "Fast correction applied: %d steps back → %02d:00",
+                 correction_accum_, displayed_hour_);
+        correction_pending_ = false;
+        correction_accum_   = 0;
+        xSemaphoreGive(mutex_);
+        return;
+    }
+
+    // ── C: fast correction accumulating — slot found, :00 not yet reached ─────
+    if (correction_pending_ && !at_top_of_hour) {
+        // One more real minute has passed; advance motor and grow the correction.
+        motor_.microstep_n(STEPS_PER_CLOCK_MINUTE, StepDirection::FORWARD);
+        correction_accum_ += STEPS_PER_CLOCK_MINUTE;
         displayed_minute_ = (displayed_minute_ + 1) % 60;
         if (displayed_minute_ == 0 && displayed_hour_ >= 0)
             displayed_hour_ = (displayed_hour_ + 1) % 12;
         ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
-        ESP_LOGD(TAG, "Sensor not found near hour — normal advance");
+        ESP_LOGD(TAG, "Fast correction accumulating: accum=%d  disp=%02d:%02d",
+                 correction_accum_, displayed_hour_, displayed_minute_);
+        xSemaphoreGive(mutex_);
+        return;
     }
+
+    // ── D: normal scan — advance one minute while watching for the slot ────────
+    int  trigger_step = 0;
+    bool found        = scan_full(trigger_step);
+
+    // Update displayed position for the motor advance we just did.
+    int new_min  = (displayed_minute_ + 1) % 60;
+    int new_hour = displayed_hour_;
+    if (new_min == 0 && displayed_hour_ >= 0)
+        new_hour = (displayed_hour_ + 1) % 12;
+
+    bool needs_catchup = false;
+
+    if (found) {
+        // overshoot > 0  → motor went past 12:00 (need backward move)
+        // overshoot < 0  → motor stopped before 12:00 (need forward move)
+        int overshoot = STEPS_PER_CLOCK_MINUTE - trigger_step - sensor_offset_steps_;
+        ESP_LOGI(TAG, "Slot found at step %d  overshoot=%d  past_hour=%d",
+                 trigger_step, overshoot, (int)past_hour_);
+
+        if (!past_hour_) {
+            // ── Fast / on-time case ────────────────────────────────────────
+            if (at_top_of_hour) {
+                // Correct immediately
+                if (overshoot > 0)
+                    motor_.microstep_n(overshoot, StepDirection::BACKWARD);
+                else if (overshoot < 0)
+                    motor_.microstep_n(-overshoot, StepDirection::FORWARD);
+                displayed_hour_   = t.tm_hour % 12;
+                displayed_minute_ = 0;
+                ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+                ESP_LOGI(TAG, "On-time correction: %d steps → %02d:00",
+                         overshoot, displayed_hour_);
+            } else {
+                // Defer backward correction to the :00 tick
+                correction_pending_ = true;
+                correction_accum_   = overshoot;
+                displayed_minute_   = new_min;
+                displayed_hour_     = new_hour;
+                ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+                ESP_LOGI(TAG, "Fast case: slot at step %d, correction %d deferred to :00",
+                         trigger_step, overshoot);
+            }
+        } else {
+            // ── Slow case: :00 already passed, slot just found ────────────
+            // Motor is at end of scan; move to exact 12:00
+            if (overshoot > 0)
+                motor_.microstep_n(overshoot, StepDirection::BACKWARD);
+            else if (overshoot < 0)
+                motor_.microstep_n(-overshoot, StepDirection::FORWARD);
+            displayed_hour_   = t.tm_hour % 12;
+            displayed_minute_ = 0;
+            ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+            past_hour_        = false;
+            ESP_LOGI(TAG, "Slow correction: moved to %02d:00, will fast-forward to real time",
+                     displayed_hour_);
+            // Release mutex before calling cmd_set_time() to avoid deadlock
+            needs_catchup = true;
+        }
+    } else {
+        // Slot not found this minute — normal advance
+        displayed_minute_ = new_min;
+        displayed_hour_   = new_hour;
+        ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+
+        // If we just crossed :00 without seeing the slot, mark slow case active
+        if (at_top_of_hour && !past_hour_) {
+            past_hour_ = true;
+            ESP_LOGI(TAG, "Crossed :00 without slot — slow correction mode active");
+        }
+    }
+
+    xSemaphoreGive(mutex_);
+
+    // Slow case catch-up: advance hands to current real time (runs outside mutex)
+    if (needs_catchup) {
+        ESP_LOGI(TAG, "Slow case: fast-forwarding hands to current time");
+        cmd_set_time(-1, -1);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sensor scan helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool ClockManager::scan_full(int &trigger_step)
+{
+    const int POLL_EVERY = 10;
+    const int MAX_STEPS  = STEPS_PER_CLOCK_MINUTE;
+
+    trigger_step = 0;
+    bool found   = false;
+
+    sensor_.led_on();
+    for (int s = 0; s < MAX_STEPS; s += POLL_EVERY) {
+        motor_.microstep_n(POLL_EVERY, StepDirection::FORWARD);
+        int raw = sensor_.read_raw();
+        last_sensor_adc_ = raw;
+        if (!found && raw > sensor_.get_threshold()) {
+            found        = true;
+            trigger_step = s + POLL_EVERY;  // steps advanced when trigger fired
+        }
+    }
+    sensor_.led_off();
+    return found;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -16,9 +16,6 @@
 
 // ── Clock configuration constants ────────────────────────────────────────────
 
-/// Window around top-of-hour (seconds either side) when sensor correction runs.
-static constexpr int SENSOR_WINDOW_SECONDS = 30;
-
 /// NTP server list (primary, fallback)
 static constexpr const char* NTP_SERVER_1 = "pool.ntp.org";
 static constexpr const char* NTP_SERVER_2 = "time.google.com";
@@ -185,7 +182,16 @@ public:
 
 private:
     void tick();
-    void check_sensor_and_correct();
+
+    /**
+     * @brief Advance ring exactly one clock-minute with LED on, watching for
+     *        the reflective slot.
+     * @param[out] trigger_step  Step count within the scan when slot first fired.
+     *                           Only valid when return value is true.
+     * @return true if slot was detected.
+     */
+    bool scan_full(int &trigger_step);
+
     void advance_one_minute();
     static void clock_task(void* arg);
 
@@ -204,6 +210,14 @@ private:
     volatile bool cal_mode_ = false;   ///< Prevents tick() from running
     CalPhase      cal_phase_           = CalPhase::IDLE;
     int           cal_steps_from_trigger_ = 0;
+
+    // ── Per-minute sensor correction state ───────────────────────────────────
+    /// Fast case: slot found before :00, backward correction deferred.
+    bool correction_pending_ = false;
+    /// Accumulated steps past 12:00 to reverse at the :00 tick.
+    int  correction_accum_   = 0;
+    /// Slow case: :00 tick passed without finding slot; correct forward when found.
+    bool past_hour_          = false;
 
     // ── Scan results buffer ───────────────────────────────────────────────────
     ScanEntry scan_buf_[SCAN_BUF_SIZE] = {};
