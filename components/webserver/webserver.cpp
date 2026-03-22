@@ -543,7 +543,7 @@ char* WebServer::build_status_json()
     if (!root) return nullptr;
 
     // Time
-    cJSON_AddStringToObject(root, "time",         clock_mgr_.time_12h().c_str());
+    cJSON_AddStringToObject(root, "time",         clock_mgr_.format_time("%I:%M:%S %p").c_str());
     cJSON_AddStringToObject(root, "date",         clock_mgr_.date_long().c_str());
     cJSON_AddNumberToObject(root, "displayed_min", clock_mgr_.displayed_minute());
     cJSON_AddNumberToObject(root, "displayed_hour",clock_mgr_.displayed_hour());

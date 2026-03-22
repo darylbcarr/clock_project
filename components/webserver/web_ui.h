@@ -354,7 +354,7 @@ input[type=range]::-webkit-slider-thumb {
 
   <!-- Time display -->
   <div class="card">
-    <div id="big-time">--:-- --</div>
+    <div id="big-time">--:--:-- --</div>
     <div id="big-date">---</div>
     <span id="sntp-badge" class="sntp-badge no">&#9679; Internet not synced</span>
   </div>
