@@ -121,8 +121,8 @@ input[type=time] { color-scheme: dark; }
 html[data-theme="light"] input[type=time] { color-scheme: light; }
 
 /* ── Responsive: collapse nav on small screens ── */
-@media (max-width: 540px) {
-  #nav-links, #theme-toggle, .accent-dots { display: none; }
+@media (max-width: 700px) {
+  #nav-links, #theme-toggle, #topbar .accent-dots { display: none; }
   #hamburger { display: flex; }
 }
 
