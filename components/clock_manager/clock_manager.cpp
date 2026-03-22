@@ -95,31 +95,33 @@ void ClockManager::clock_task(void* arg)
     ClockManager* self = static_cast<ClockManager*>(arg);
     static constexpr uint32_t SYNC_NOTIFY = 1U;
 
-    // ── Initial alignment: wait until the next whole-minute boundary ──────────
-    // Interruptible so an SNTP sync can trigger an immediate hand correction.
-    {
+    // Helper lambda: sleep until the next whole-minute boundary (:00 seconds).
+    // Returns true if an SNTP notification arrived and cmd_set_time() was called.
+    // Uses (60 - tm_sec) % 60 so that if we're already at :00 we don't wait 60s.
+    auto wait_for_next_minute = [&]() -> bool {
         struct tm t = self->get_local_tm();
-        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) * 1000);
+        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) % 60 * 1000);
+        if (delay_ms < 200) delay_ms = 200;   // never sleep less than 200 ms
         uint32_t notif = 0;
         if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(delay_ms)) == pdTRUE
             && notif == SYNC_NOTIFY)
         {
-            ESP_LOGI("clock_manager", "Initial SNTP sync — aligning hands");
+            ESP_LOGI("clock_manager", "SNTP sync — aligning hands");
             self->cmd_set_time(-1, -1);
+            return true;
         }
-    }
+        return false;
+    };
+
+    // ── Initial alignment: wait until the next whole-minute boundary ──────────
+    wait_for_next_minute();
 
     while (self->running_) {
         self->tick();
 
-        // Sleep 60 s; wake early if SNTP syncs and we need to re-align.
-        uint32_t notif = 0;
-        if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(60000)) == pdTRUE
-            && notif == SYNC_NOTIFY)
-        {
-            ESP_LOGI("clock_manager", "Mid-run SNTP sync — aligning hands");
-            self->cmd_set_time(-1, -1);
-        }
+        // Re-align: sleep until the next :00 boundary (not a flat 60 s),
+        // so that tick() always fires just after :00 regardless of scan duration.
+        wait_for_next_minute();
     }
     vTaskDelete(nullptr);
 }
