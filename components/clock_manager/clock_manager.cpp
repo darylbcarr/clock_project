@@ -97,11 +97,11 @@ void ClockManager::clock_task(void* arg)
 
     // Helper lambda: sleep until the next whole-minute boundary (:00 seconds).
     // Returns true if an SNTP notification arrived and cmd_set_time() was called.
-    // Uses (60 - tm_sec) % 60 so that if we're already at :00 we don't wait 60s.
+    // Uses (60 - tm_sec) without % 60 so that if we're at :00 we wait a full 60 s
+    // rather than 0 s — prevents a double-tick when a correction finishes quickly.
     auto wait_for_next_minute = [&]() -> bool {
         struct tm t = self->get_local_tm();
-        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) % 60 * 1000);
-        if (delay_ms < 200) delay_ms = 200;   // never sleep less than 200 ms
+        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) * 1000);
         uint32_t notif = 0;
         if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(delay_ms)) == pdTRUE
             && notif == SYNC_NOTIFY)
