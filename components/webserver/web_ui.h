@@ -112,9 +112,9 @@ html, body {
 #mobile-menu.open { display: flex; }
 #mobile-menu .nav-btn { text-align: left; width: 100%; }
 #mobile-menu .mob-divider { height: 1px; background: var(--border); margin: 6px 0; }
-#mobile-menu .mob-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
-#mobile-menu .mob-row label { font-size: 13px; color: var(--dim); flex: 1; }
-#mobile-menu .accent-dots { margin-left: 0; }
+#mobile-menu .mob-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; flex-wrap: wrap; }
+#mobile-menu .mob-row label { font-size: 13px; color: var(--dim); min-width: 56px; }
+#mobile-menu .accent-dots { margin-left: 0; flex-wrap: wrap; }
 
 /* ── Time input: fix dark clock icon ── */
 input[type=time] { color-scheme: dark; }
