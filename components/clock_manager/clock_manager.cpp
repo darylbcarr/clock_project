@@ -95,22 +95,26 @@ void ClockManager::clock_task(void* arg)
     ClockManager* self = static_cast<ClockManager*>(arg);
     static constexpr uint32_t SYNC_NOTIFY = 1U;
 
-    // Helper lambda: sleep until the next whole-minute boundary (:00 seconds).
-    // Returns true if an SNTP notification arrived and cmd_set_time() was called.
-    // Uses (60 - tm_sec) without % 60 so that if we're at :00 we wait a full 60 s
-    // rather than 0 s — prevents a double-tick when a correction finishes quickly.
-    auto wait_for_next_minute = [&]() -> bool {
-        struct tm t = self->get_local_tm();
-        uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) * 1000);
-        uint32_t notif = 0;
-        if (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(delay_ms)) == pdTRUE
-            && notif == SYNC_NOTIFY)
-        {
-            ESP_LOGI("clock_manager", "SNTP sync — aligning hands");
-            self->cmd_set_time(-1, -1);
-            return true;
+    // Sleep until the next whole-minute (:00 second) boundary.
+    // If an SNTP notification arrives, run cmd_set_time() then continue waiting
+    // for the *following* :00 — this prevents the subsequent tick() from
+    // double-advancing the hands on the same minute that cmd_set_time() just set.
+    auto wait_for_next_minute = [&]() {
+        while (true) {
+            struct tm t = self->get_local_tm();
+            uint32_t delay_ms = (uint32_t)((60 - t.tm_sec) * 1000);
+            uint32_t notif = 0;
+            bool synced = (xTaskNotifyWait(0, ULONG_MAX, &notif, pdMS_TO_TICKS(delay_ms)) == pdTRUE
+                           && notif == SYNC_NOTIFY);
+            if (synced) {
+                ESP_LOGI("clock_manager", "SNTP sync — aligning hands");
+                self->cmd_set_time(-1, -1);
+                // Re-align: wait for the next :00 after cmd_set_time so that
+                // tick() doesn't immediately advance again on the same minute.
+                continue;
+            }
+            break;  // timed out naturally at a :00 boundary — ready to tick
         }
-        return false;
     };
 
     // ── Initial alignment: wait until the next whole-minute boundary ──────────
