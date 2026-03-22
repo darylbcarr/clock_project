@@ -93,6 +93,39 @@ html, body {
 .accent-dot:hover { transform: scale(1.2); }
 .accent-dot.active { border-color: var(--text); }
 
+/* ── Hamburger button (mobile only) ── */
+#hamburger {
+  display: none; flex-direction: column; justify-content: center; gap: 5px;
+  width: 36px; height: 36px; padding: 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surf2); cursor: pointer;
+  margin-left: 8px;
+}
+#hamburger span { display: block; height: 2px; background: var(--dim); border-radius: 1px; transition: background var(--tr); }
+#hamburger:hover span { background: var(--a); }
+
+/* ── Mobile dropdown menu ── */
+#mobile-menu {
+  display: none; position: fixed; top: var(--nav-h); left: 0; right: 0;
+  background: var(--surf); border-bottom: 1px solid var(--border);
+  padding: 8px 12px 12px; z-index: 99; flex-direction: column; gap: 4px;
+}
+#mobile-menu.open { display: flex; }
+#mobile-menu .nav-btn { text-align: left; width: 100%; }
+#mobile-menu .mob-divider { height: 1px; background: var(--border); margin: 6px 0; }
+#mobile-menu .mob-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+#mobile-menu .mob-row label { font-size: 13px; color: var(--dim); flex: 1; }
+#mobile-menu .accent-dots { margin-left: 0; }
+
+/* ── Time input: fix dark clock icon ── */
+input[type=time] { color-scheme: dark; }
+html[data-theme="light"] input[type=time] { color-scheme: light; }
+
+/* ── Responsive: collapse nav on small screens ── */
+@media (max-width: 540px) {
+  #nav-links, #theme-toggle, .accent-dots { display: none; }
+  #hamburger { display: flex; }
+}
+
 /* ── Main content ── */
 #main {
   margin-top: var(--nav-h);
@@ -272,10 +305,12 @@ input[type=range]::-webkit-slider-thumb {
 <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
 <div id="topbar">
   <span class="logo">&#9201; Clock</span>
-  <button class="nav-btn active" onclick="nav('clock')">Clock</button>
-  <button class="nav-btn" onclick="nav('lights')">Lights</button>
-  <button class="nav-btn" onclick="nav('info')">Info</button>
-  <button class="nav-btn" onclick="nav('config')">Config</button>
+  <div id="nav-links" style="display:flex;align-items:center;gap:4px;">
+    <button class="nav-btn active" onclick="nav('clock')">Clock</button>
+    <button class="nav-btn" onclick="nav('lights')">Lights</button>
+    <button class="nav-btn" onclick="nav('info')">Info</button>
+    <button class="nav-btn" onclick="nav('config')">Config</button>
+  </div>
   <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark">&#9788;</button>
   <div class="accent-dots">
     <div class="accent-dot active" style="background:#00d4ff" data-accent="cyan"    onclick="setAccent(this)"></div>
@@ -283,6 +318,32 @@ input[type=range]::-webkit-slider-thumb {
     <div class="accent-dot"        style="background:#22d3a0" data-accent="green"   onclick="setAccent(this)"></div>
     <div class="accent-dot"        style="background:#fb923c" data-accent="orange"  onclick="setAccent(this)"></div>
     <div class="accent-dot"        style="background:#fb7185" data-accent="rose"    onclick="setAccent(this)"></div>
+  </div>
+  <button id="hamburger" onclick="toggleMobileMenu()" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+</div>
+
+<!-- ── Mobile dropdown ──────────────────────────────────────────────────── -->
+<div id="mobile-menu">
+  <button class="nav-btn active" onclick="nav('clock');closeMobileMenu()">Clock</button>
+  <button class="nav-btn" onclick="nav('lights');closeMobileMenu()">Lights</button>
+  <button class="nav-btn" onclick="nav('info');closeMobileMenu()">Info</button>
+  <button class="nav-btn" onclick="nav('config');closeMobileMenu()">Config</button>
+  <div class="mob-divider"></div>
+  <div class="mob-row">
+    <label>Theme</label>
+    <button id="theme-toggle-mob" onclick="toggleTheme()" title="Toggle light/dark" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--surf2);color:var(--dim);cursor:pointer;font-size:16px;">&#9788;</button>
+  </div>
+  <div class="mob-row">
+    <label>Accent</label>
+    <div class="accent-dots">
+      <div class="accent-dot active" style="background:#00d4ff" data-accent="cyan"    onclick="setAccent(this)"></div>
+      <div class="accent-dot"        style="background:#4f8ef7" data-accent="blue"    onclick="setAccent(this)"></div>
+      <div class="accent-dot"        style="background:#22d3a0" data-accent="green"   onclick="setAccent(this)"></div>
+      <div class="accent-dot"        style="background:#fb923c" data-accent="orange"  onclick="setAccent(this)"></div>
+      <div class="accent-dot"        style="background:#fb7185" data-accent="rose"    onclick="setAccent(this)"></div>
+    </div>
   </div>
 </div>
 
@@ -295,7 +356,7 @@ input[type=range]::-webkit-slider-thumb {
   <div class="card">
     <div id="big-time">--:--:--</div>
     <div id="big-date">---</div>
-    <span id="sntp-badge" class="sntp-badge no">&#9679; SNTP not synced</span>
+    <span id="sntp-badge" class="sntp-badge no">&#9679; Internet not synced</span>
   </div>
 
   <!-- Observed Clock Position -->
@@ -738,8 +799,29 @@ function nav(id) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sec-' + id).classList.add('active');
-  event.currentTarget.classList.add('active');
+  // Mark all nav buttons with matching section as active (covers both topbar + mobile menu)
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.getAttribute('onclick') && b.getAttribute('onclick').includes("'" + id + "'")) {
+      b.classList.add('active');
+    }
+  });
 }
+
+// ── Mobile menu ───────────────────────────────────────────────────────────────
+function toggleMobileMenu() {
+  document.getElementById('mobile-menu').classList.toggle('open');
+}
+function closeMobileMenu() {
+  document.getElementById('mobile-menu').classList.remove('open');
+}
+// Close mobile menu when tapping outside
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('mobile-menu');
+  const btn  = document.getElementById('hamburger');
+  if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
+    menu.classList.remove('open');
+  }
+});
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 function toggleTheme() {
@@ -1072,10 +1154,10 @@ function applyData(d) {
   const badge = document.getElementById('sntp-badge');
   if (d.sntp) {
     badge.className = 'sntp-badge ok';
-    badge.textContent = '\u25cf SNTP synced';
+    badge.textContent = '\u25cf Internet synced';
   } else {
     badge.className = 'sntp-badge no';
-    badge.textContent = '\u25cf SNTP not synced';
+    badge.textContent = '\u25cf Internet not synced';
   }
   setText('tz-iana', d.iana_tz || '—');
   setText('tz-posix', d.posix_tz || '—');
