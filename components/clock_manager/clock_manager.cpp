@@ -332,13 +332,23 @@ void ClockManager::set_timezone(const char* tz)
 
 void ClockManager::on_time_synced()
 {
+    bool first_sync = !time_valid_;
     time_valid_ = true;
     ESP_LOGI(TAG, "Time synced. Current time: %s", time_full().c_str());
-    // If we restored a known hand position from NVS, notify clock_task to sync immediately
-    if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
-        xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
-        ESP_LOGI(TAG, "Notified clock_task to sync hand (displayed=%02d:%02d)",
-                 displayed_hour_, displayed_minute_);
+
+    if (first_sync) {
+        // First sync only: advance hands from the NVS-restored position to current
+        // real time so the clock is correct after a cold boot or long power-off.
+        if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
+            xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
+            ESP_LOGI(TAG, "First sync — notified clock_task to align hands (displayed=%02d:%02d)",
+                     displayed_hour_, displayed_minute_);
+        }
+    } else {
+        // Periodic SNTP re-sync: the system clock is already corrected automatically.
+        // Do NOT move the motor — the displayed position is only an estimate and
+        // the sensor scan handles hand correction on every minute tick.
+        ESP_LOGI(TAG, "Periodic SNTP re-sync — system clock updated, no hand movement");
     }
 }
 
