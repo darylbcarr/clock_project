@@ -22,6 +22,20 @@ export IDF_PATH
 export ESP_ROM_ELF_DIR=$ROM_ELFS
 export PATH="$TOOLCHAIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Use ccache if available — dramatically speeds up rebuilds of the Matter SDK
+# when only clock source files changed.
+if command -v ccache >/dev/null 2>&1; then
+    export IDF_CCACHE_ENABLE=1
+fi
+
+# Prefer Ninja over Unix Makefiles when available.
+# Ninja uses content hashing, not timestamps, so cmake reconfigures
+# (triggered by git commits updating .git/refs/heads/main) don't
+# cause spurious full rebuilds of unchanged source files.
+if command -v ninja >/dev/null 2>&1; then
+    export IDF_CMAKE_GENERATOR=Ninja
+fi
+
 # ── Parse -p PORT from args ───────────────────────────────────────────────────
 PORT=""
 REST_ARGS=()
