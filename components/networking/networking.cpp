@@ -275,9 +275,10 @@ void Networking::on_got_ip(esp_netif_ip_info_t* ip_info)
              IPSTR, IP2STR(&ip_info->netmask));
 
     populate_dns();
+    refresh_wifi_info();   // reliable point to read SSID + RSSI (IP fully established)
 
-    ESP_LOGI(TAG, "Got IP  local=%s  gw=%s",
-             status_.local_ip, status_.gateway);
+    ESP_LOGI(TAG, "Got IP  local=%s  gw=%s  ssid=%s  rssi=%d dBm",
+             status_.local_ip, status_.gateway, status_.ssid, status_.rssi);
 
     // WiFi connected — restore balanced coex so BLE/Matter-over-IP coexist fairly
     if (ssid_[0] == '\0') {
@@ -739,11 +740,13 @@ void Networking::populate_dns()
     }
 }
 
-void Networking::refresh_rssi()
+void Networking::refresh_wifi_info()
 {
     if (!status_.wifi_connected) return;
     wifi_ap_record_t ap = {};
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         status_.rssi = ap.rssi;
+        if (ap.ssid[0] != '\0')
+            strncpy(status_.ssid, (char*)ap.ssid, sizeof(status_.ssid) - 1);
     }
 }

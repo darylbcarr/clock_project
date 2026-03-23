@@ -93,6 +93,9 @@ public:
     bool is_connected()   const { return status_.wifi_connected; }
     bool is_time_synced() const { return status_.sntp_synced; }
 
+    /** Re-read SSID and RSSI from the driver.  No-op if not connected. */
+    void refresh_wifi_info();
+
     /**
      * @brief Tell Networking whether the device is already Matter-commissioned.
      *        Call before begin().  When true, mDNS is allowed to start even on
@@ -127,7 +130,6 @@ private:
     void do_geolocation();          // runs in a short-lived task
     bool fetch_geolocation();       // HTTP GET ip-api.com, parse JSON
     void apply_timezone(const char* iana_tz);
-    void refresh_rssi();
     void populate_dns();
 
     static void geo_task(void* arg);  // FreeRTOS task wrapper for do_geolocation

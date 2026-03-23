@@ -535,6 +535,7 @@ void WebServer::dispatch_cmd(const char* cmd)
 
 char* WebServer::build_status_json()
 {
+    net_.refresh_wifi_info();   // update SSID + RSSI before reading
     const NetStatus& net = net_.get_status();
     uint32_t uptime_s  = static_cast<uint32_t>(esp_timer_get_time() / 1'000'000ULL);
     uint32_t free_heap = esp_get_free_heap_size();
