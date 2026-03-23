@@ -628,28 +628,6 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
-  <!-- Sensor Diagnostics -->
-  <div class="card">
-    <div class="card-title">Sensor Diagnostics</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-      Test the LED/LDR sensor without a serial console.
-    </p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <button class="btn btn-secondary btn-sm" onclick="doReadSensor()">Read Now</button>
-      <button class="btn btn-secondary btn-sm" id="btn-scan" onclick="doSensorScan()">Scan Ring (20 min)</button>
-    </div>
-    <div style="font-size:12px;margin-bottom:8px;">
-      Last reading: <span id="diag-adc" style="font-weight:600;">—</span>
-      &nbsp;|&nbsp; Threshold: <span id="diag-thr">—</span>
-      &nbsp;|&nbsp; <span id="diag-trig" style="font-weight:600;"></span>
-    </div>
-    <div id="diag-scan-wrap" style="display:none;">
-      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Scan Results</div>
-      <div id="diag-scan-status" style="font-size:11px;color:var(--muted);margin-bottom:6px;"></div>
-      <div id="diag-scan-table" style="font-family:monospace;font-size:11px;line-height:1.5;white-space:pre;overflow-x:auto;background:var(--surface2);padding:8px;border-radius:6px;max-height:240px;overflow-y:auto;"></div>
-    </div>
-  </div>
-
   <!-- Motor Speed -->
   <div class="card">
     <div class="card-title">Motor Speed</div>
