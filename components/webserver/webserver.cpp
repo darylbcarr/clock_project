@@ -259,17 +259,6 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
     }
     if (clock_changed) ConfigStore::save(cc);
 
-    // ── Network credentials (save; take effect on next boot) ─────────────────
-    cJSON* ssid_j = cJSON_GetObjectItem(body, "ssid");
-    cJSON* pass_j = cJSON_GetObjectItem(body, "password");
-    if (cJSON_IsString(ssid_j) && cJSON_IsString(pass_j)) {
-        NetCfg nc;
-        ConfigStore::load(nc);
-        snprintf(nc.ssid,     sizeof(nc.ssid),     "%s", ssid_j->valuestring);
-        snprintf(nc.password, sizeof(nc.password), "%s", pass_j->valuestring);
-        ConfigStore::save(nc);
-    }
-
     // ── Timezone override (save; applied by networking on next connect) ────────
     if ((j = cJSON_GetObjectItem(body, "tz_override")) && cJSON_IsString(j)) {
         NetCfg nc;

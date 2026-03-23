@@ -646,28 +646,6 @@ input[type=range]::-webkit-slider-thumb {
     <button class="btn btn-secondary btn-sm" onclick="saveSpeed()">Save Speed</button>
   </div>
 
-  <!-- WiFi Credentials -->
-  <div class="card">
-    <div class="card-title">WiFi Credentials</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-      Saved credentials are used on next restart.
-    </p>
-    <div class="cfg-row">
-      <label>SSID</label>
-      <input type="text" id="cfg-ssid" placeholder="Network name" autocomplete="off"
-             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
-                    background:var(--surf2);color:var(--text);font-size:13px;">
-    </div>
-    <div class="cfg-row" style="margin-top:6px;">
-      <label>Password</label>
-      <input type="password" id="cfg-pass" placeholder="••••••••" autocomplete="off"
-             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
-                    background:var(--surf2);color:var(--text);font-size:13px;">
-    </div>
-    <button class="btn btn-secondary btn-sm" style="margin-top:10px;width:100%"
-            onclick="saveWifi()">Save Credentials</button>
-  </div>
-
   <!-- Timezone Override -->
   <div class="card">
     <div class="card-title">Timezone Override</div>
@@ -1081,16 +1059,6 @@ function updateSpeedLabel(v) {
 function saveSpeed() {
   const v = parseInt(document.getElementById('cfg-step-delay').value);
   postCfg({step_delay_us: v}).then(() => toast('Motor speed saved'));
-}
-
-function saveWifi() {
-  const ssid = document.getElementById('cfg-ssid').value.trim();
-  const pass = document.getElementById('cfg-pass').value;
-  if (!ssid) { toast('Enter SSID', 'err'); return; }
-  postCfg({ssid, password: pass}).then(() => {
-    toast('WiFi saved — restart to apply');
-    document.getElementById('cfg-pass').value = '';
-  });
 }
 
 function saveTz() {
