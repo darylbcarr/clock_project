@@ -13,7 +13,7 @@ struct ClockCfg {
 
 /// Persisted per-strip LED state
 struct LedStripCfg {
-    uint16_t len        = 30;
+    uint16_t len        = 0;   ///< 0 = never saved; main.cpp applies per-strip hardware defaults
     uint8_t  r          = 255;
     uint8_t  g          = 255;
     uint8_t  b          = 255;

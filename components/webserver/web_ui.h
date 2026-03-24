@@ -549,12 +549,12 @@ input[type=range]::-webkit-slider-thumb {
     <div class="card-title">LED Strip Lengths</div>
     <div class="cfg-row">
       <label>Ring LED count</label>
-      <input type="number" id="cfg-s1len" min="1" max="300" value="30">
+      <input type="number" id="cfg-s1len" min="1" max="300" value="24">
       <button class="btn btn-secondary btn-sm" onclick="applyLen(1)">Apply</button>
     </div>
     <div class="cfg-row">
       <label>Base LED count</label>
-      <input type="number" id="cfg-s2len" min="1" max="300" value="30">
+      <input type="number" id="cfg-s2len" min="1" max="300" value="6">
       <button class="btn btn-secondary btn-sm" onclick="applyLen(2)">Apply</button>
     </div>
   </div>
@@ -1224,10 +1224,13 @@ function applyData(d) {
   if (!cfgInitialized) {
     // First data received — populate all config inputs
     if (d.step_delay_us) {
-      document.getElementById('cfg-step-delay').value = d.step_delay_us;
-      updateSpeedLabel(d.step_delay_us);
+      const slEl = document.getElementById('cfg-step-delay');
+      if (document.activeElement !== slEl) {
+        slEl.value = d.step_delay_us;
+        updateSpeedLabel(d.step_delay_us);
+      }
     }
-    if (d.ssid) document.getElementById('cfg-ssid').value = d.ssid;
+
     if (s1len !== undefined) document.getElementById('cfg-s1len').value = s1len;
     if (s2len !== undefined) document.getElementById('cfg-s2len').value = s2len;
     document.getElementById('dir-norm').classList.toggle('active', !d.motor_reverse);
@@ -1245,9 +1248,12 @@ function applyData(d) {
     // Subsequent pushes — only update a config input if the server value
     // actually changed (catches external changes via UART/console).
     if (d.step_delay_us && d.step_delay_us !== serverCfg.step_delay_us) {
-      document.getElementById('cfg-step-delay').value = d.step_delay_us;
-      updateSpeedLabel(d.step_delay_us);
-      serverCfg.step_delay_us = d.step_delay_us;
+      const slEl = document.getElementById('cfg-step-delay');
+      if (document.activeElement !== slEl) {
+        slEl.value = d.step_delay_us;
+        updateSpeedLabel(d.step_delay_us);
+      }
+      serverCfg.step_delay_us = d.step_delay_us; // always track, even if not applied
     }
     if (d.motor_reverse !== undefined && d.motor_reverse !== serverCfg.motor_reverse) {
       document.getElementById('dir-norm').classList.toggle('active', !d.motor_reverse);
@@ -1269,6 +1275,7 @@ function applyData(d) {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
   const ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.onopen  = () => { cfgInitialized = false; }; // re-populate Config fields on every (re)connect
   ws.onmessage = e => {
     try { applyData(JSON.parse(e.data)); } catch(err) {}
   };

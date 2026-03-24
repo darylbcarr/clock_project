@@ -590,6 +590,10 @@ extern "C" void app_main()
     ConfigStore::load(ledCfg);
     ConfigStore::load(netCfg);
 
+    // Per-strip hardware defaults for new installations (len==0 means never saved).
+    if (ledCfg.strip[0].len == 0) ledCfg.strip[0].len = 24;  // Ring
+    if (ledCfg.strip[1].len == 0) ledCfg.strip[1].len = 6;   // Base
+
     // Apply clock config before start()
     s_clock.set_motor_reverse(clockCfg.motor_reverse);
     s_clock.set_step_delay_us(clockCfg.step_delay_us);
@@ -779,6 +783,9 @@ extern "C" void app_main()
                     // tries to connect — if our event handlers are not registered
                     // yet we miss the IP event, and if WiFi STA isn't explicitly
                     // started we can hit "Haven't to connect to a suitable AP now!".
+                    // Hand position is unknown during fresh Matter commissioning —
+                    // don't let the first SNTP sync drive the motor to a stale target.
+                    s_clock.suppress_first_sync_align();
                     s_net.set_wifi_credentials(wifi_ssid, wifi_pass);
                     if (tz_override[0] != '\0')
                         s_net.set_timezone_override(tz_override);
