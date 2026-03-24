@@ -46,6 +46,14 @@ public:
     void on_time_synced();
     bool is_time_valid() const { return time_valid_; }
 
+    /**
+     * @brief Suppress the first-sync hand alignment.
+     *        Call before start() on first-time setup, where the stored displayed
+     *        position is stale.  SNTP still sets the system clock; the motor will
+     *        not move until the user explicitly triggers set-time.
+     */
+    void suppress_first_sync_align() { suppress_align_ = true; }
+
     // ── Command interface ─────────────────────────────────────────────────────
 
     /** Set hands to current real time, moving forward from stored position. */
@@ -205,6 +213,7 @@ private:
     bool     time_valid_;
     bool     running_;
     bool     needs_sntp_sync_ = false;
+    bool     suppress_align_  = false; ///< Set by suppress_first_sync_align(); skip first-sync motor move
 
     // ── Offset calibration state ─────────────────────────────────────────────
     volatile bool cal_mode_ = false;   ///< Prevents tick() from running

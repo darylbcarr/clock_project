@@ -337,9 +337,12 @@ void ClockManager::on_time_synced()
     ESP_LOGI(TAG, "Time synced. Current time: %s", time_full().c_str());
 
     if (first_sync) {
-        // First sync only: advance hands from the NVS-restored position to current
-        // real time so the clock is correct after a cold boot or long power-off.
-        if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
+        if (suppress_align_) {
+            // First-time setup: hand position is unknown (stale NVS).
+            // Time is valid for display purposes; motor stays put.
+            ESP_LOGI(TAG, "First sync — hand alignment suppressed (first-time setup)");
+        } else if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
+            // Normal boot: advance hands from NVS-restored position to real time.
             xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
             ESP_LOGI(TAG, "First sync — notified clock_task to align hands (displayed=%02d:%02d)",
                      displayed_hour_, displayed_minute_);

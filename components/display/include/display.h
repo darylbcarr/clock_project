@@ -121,14 +121,26 @@ public:
      */
     void render_char_inverted(int page, int col, char c);
 
+    /**
+     * Invert a horizontal run of character cells at pixel-level y position.
+     * Used for cursor overlays with 9-px line spacing where characters span
+     * two hardware pages.  Modifies the internal page buffer and flushes.
+     *
+     * @param y_px      Top pixel of the character row (0..63)
+     * @param col_start First character column to invert (0..15)
+     * @param num_cols  Number of columns to invert
+     */
+    void invert_char_cells(int y_px, int col_start, int num_cols);
+
     // Debug
     void debug_display_info();
 
 private:
     static constexpr int SCREEN_WIDTH  = 128;
     static constexpr int SCREEN_HEIGHT = 64;
-    static constexpr int CHAR_HEIGHT   = 8;
-    static constexpr int VISIBLE_LINES = SCREEN_HEIGHT / CHAR_HEIGHT;  // 8
+    static constexpr int CHAR_HEIGHT   = 8;   // font glyph height in pixels
+    static constexpr int LINE_HEIGHT   = 9;   // glyph (8) + 1px inter-line gap
+    static constexpr int VISIBLE_LINES = 7;   // floor(64 / 9) = 7 lines visible
 
     ssd1306_handle_t          m_dev;
     i2c_master_bus_handle_t   m_bus_handle;

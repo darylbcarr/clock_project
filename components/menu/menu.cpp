@@ -402,302 +402,415 @@ void Menu::show_info_screen(ClockManager &cm, Networking &net)
     render();
 }
 
-// ── show_text_input ───────────────────────────────────────────────────────────
+// ── show_wifi_credentials ─────────────────────────────────────────────────────
 //
-// Character grid — all characters visible at once as a 6×16 grid.
+// Single-screen WiFi credential entry (SSID + Password).
+// Returns true = confirmed, false = cancelled.
 //
-// Layout (display rows 2-7, with row 0=title, row 1=entered text):
-//   Row 0:  a b c d e f g h i j k l m n o p
-//   Row 1:  q r s t u v w x y z   A B C D E   (space at col 10)
-//   Row 2:  F G H I J K L M N O P Q R S T U
-//   Row 3:  V W X Y Z 0 1 2 3 4 5 6 7 8 9
-//   Row 4:  ! @ # $ % ^ & * ( ) - _ = + [ ]
-//   Row 5:  { } | ; : ' " , . < > / ? ~ `  >  (last slot = OK/confirm)
+// Layout (7 lines, 9px spacing):
+//   0  ">Name: <9 chars>"   '>' marks active field
+//   1  ">PW:   <9 chars>"
+//   2  blank
+//   3  charset row 1 (16 chars)
+//   4  charset row 2 (16 chars)
+//   5  blank
+//   6  "ab AB # Sym Done"
 //
-// The cursor is a SINGLE INVERTED CHARACTER — no brackets.
+// Cursor sections (linear navigation, wraps):
+//   NAME → PW → GRID (0..N-1) → TAB_ab → TAB_AB → TAB_NUM → TAB_SYM
+//   → TAB_DONE → NAME
 //
-// Controls (button-only, encoder-only, or both):
-//   Tap A (release < 800ms)  → navigate backward one step
-//   Hold A to 800ms          → append current character (no movement during hold)
-//   Tap B (release < 800ms)  → navigate forward one step
-//   Hold B to 800ms          → backspace (no movement during hold)
-//   A+B brief (release both) → confirm and return
-//   A+B hold 800ms           → cancel (return empty string)
-//   Encoder rotate           → navigate (fast; same flat cursor)
-//   Encoder short press      → append character (or confirm if cursor on '>')
-//   Encoder long press       → backspace
+// Long A:  NAME/PW = set active field + jump to grid start
+//          GRID    = append char to active text (cursor stays; '_' inserts space)
+//          TAB     = switch charset + jump to grid start
+//          DONE    = submit if Name non-empty
+// Long B:  GRID section only = backspace from active text
+// A+B hold ≥800ms: cancel (return false, fields cleared)
+// A/B tap: navigate backward / forward
+// Encoder rotate: navigate; short press = Long A; long press = Long B
 
-static const char GRID_CHARS[] =
-    "abcdefghijklmnop"    // row 0
-    "qrstuvwxyz ABCDE"    // row 1  (space at col 10)
-    "FGHIJKLMNOPQRSTU"    // row 2
-    "VWXYZ0123456789 "    // row 3  (trailing space = padding)
-    "!@#$%^&*()-_=+[]"    // row 4
-    "{}|;:'\",.<>/?~` >"; // row 5  (last slot '>' = confirm sentinel)
-
-static constexpr int GRID_ROWS    = 6;
-static constexpr int GRID_COLS    = 16;
-static constexpr int GRID_SIZE    = GRID_ROWS * GRID_COLS;  // 96
-static constexpr int GRID_OK_POS  = GRID_SIZE - 1;          // '>' = confirm
-
-std::string Menu::show_text_input(const std::string &title, bool mask, size_t max_len)
+bool Menu::show_wifi_credentials(std::string &ssid, std::string &pw)
 {
-    if (!input_poll_fn_)
-        return {};
+    if (!input_poll_fn_) return false;
 
-    std::string result;
-    int cursor_pos = 0;   // flat index 0..GRID_SIZE-1; starts on 'a'
-
-    bool enc_btn_last = false;
-    bool btnA_last    = false;
-    bool btnB_last    = false;
-    bool both_last    = false;
-
-    uint32_t enc_hold_ms    = 0;
-    bool     enc_longfire   = false;
-    uint32_t btnA_hold_ms   = 0;
-    bool     btnA_longfire  = false;
-    int      btnA_streak    = 0;   // consecutive rapid taps
-    uint32_t btnA_inter_ms  = 999; // ms since last A tap fired (start high = no streak)
-    uint32_t btnB_hold_ms   = 0;
-    bool     btnB_longfire  = false;
-    int      btnB_streak    = 0;
-    uint32_t btnB_inter_ms  = 999;
-
-    static constexpr uint32_t LONG_PRESS_MS  = 800;
-    static constexpr uint32_t TAP_WINDOW_MS  = 400; // max gap between taps to extend streak
-    static constexpr int      MAX_STREAK     = 8;   // caps steps per tap
-
-    auto get_row = [&]() { return cursor_pos / GRID_COLS; };
-    auto get_col = [&]() { return cursor_pos % GRID_COLS; };
-
-    auto cur_char = [&]() -> char {
-        char c = GRID_CHARS[cursor_pos];
-        return c ? c : ' ';
+    // ── charsets (32 slots each; '\0' = unused) ───────────────────────────────
+    static const char CS_ab[32] = {
+        'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p',
+        'q','r','s','t','u','v','w','x','y','z','_',0,0,0,0,0
+    };
+    static const char CS_AB[32] = {
+        'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
+        'Q','R','S','T','U','V','W','X','Y','Z','_',0,0,0,0,0
+    };
+    static const char CS_NUM[32] = {
+        '0','1','2','3','4','5','6','7','8','9',0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    };
+    static const char CS_SYM[32] = {
+        '!','@','#','$','%','^','&','*','(',')','-','=','+','[',']','{',
+        '}','|',';',':','\'','"',',','.','<','>','/','?','~','`','\\','_'
     };
 
-    auto render_grid = [&]()
-    {
-        int crow = get_row();
-        int ccol = get_col();
+    enum class WCSect  { NAME, PW, GRID, TAB_ab, TAB_AB, TAB_NUM, TAB_SYM, TAB_DONE };
+    enum class WCField { NAME, PW };
+    enum class WCSet   { ab, AB, NUM, SYM };
 
+    WCSect  section   = WCSect::NAME;
+    WCField actfield  = WCField::NAME;
+    WCSet   actset    = WCSet::ab;
+    int     gpos      = 0;
+    bool    submitted = false;
+
+    auto cs_ptr = [&]() -> const char* {
+        switch (actset) {
+            case WCSet::ab:  return CS_ab;
+            case WCSet::AB:  return CS_AB;
+            case WCSet::NUM: return CS_NUM;
+            case WCSet::SYM: return CS_SYM;
+        }
+        return CS_ab;
+    };
+
+    auto cs_size = [&]() -> int {
+        const char *p = cs_ptr();
+        int n = 32;
+        while (n > 0 && p[n-1] == '\0') n--;
+        return n ? n : 1;
+    };
+
+    auto act_text = [&]() -> std::string& {
+        return (actfield == WCField::NAME) ? ssid : pw;
+    };
+
+    // ── render ───────────────────────────────────────────────────────────────
+    auto render = [&]() {
+        const char *cs = cs_ptr();
         std::vector<std::string> lines;
 
-        // Row 0: title
-        std::string t = title;
-        if ((int)t.size() > 16) t.resize(16);
-        lines.push_back(t);
-
-        // Row 1: entered text + trailing cursor marker
-        std::string vis = mask ? std::string(result.size(), '*') : result;
-        vis += '_';
-        if ((int)vis.size() > 16) vis = vis.substr(vis.size() - 16);
-        while ((int)vis.size() < 16) vis += ' ';
-        lines.push_back(vis);
-
-        // Rows 2-7: character grid — all chars shown normally (no brackets)
-        for (int r = 0; r < GRID_ROWS; r++) {
-            int base = r * GRID_COLS;
+        auto field_line = [](bool active, const char *label,
+                             const std::string &txt) -> std::string {
             std::string s;
-            for (int c = 0; c < GRID_COLS; c++) {
-                char ch = GRID_CHARS[base + c];
-                s += ch ? ch : ' ';
-            }
-            lines.push_back(s);
-        }
+            s += (active ? '>' : ' ');
+            s += label;
+            std::string v = txt;
+            if ((int)v.size() > 9) v = v.substr(v.size() - 9);
+            while ((int)v.size() < 9) v += ' ';
+            s += v;
+            return s;
+        };
 
-        // No whole-row highlight; cursor is a single inverted character
+        lines.push_back(field_line(actfield == WCField::NAME, "Name: ", ssid));
+        lines.push_back(field_line(actfield == WCField::PW,   "PW:   ", pw));
+        lines.push_back("");
+
+        std::string r1, r2;
+        for (int i =  0; i < 16; i++) r1 += (cs[i] ? cs[i] : ' ');
+        for (int i = 16; i < 32; i++) r2 += (cs[i] ? cs[i] : ' ');
+        lines.push_back(r1);
+        lines.push_back(r2);
+        lines.push_back("");
+        lines.push_back("ab AB # Sym Done");
+
         display_.writeLines(lines, -1);
 
-        // Overlay the cursor character inverted at its exact pixel position
-        // (page = crow+2 because rows 0 and 1 are title and text field)
-        char dc = cur_char();
-        display_.render_char_inverted(crow + 2, ccol, dc);
-    };
-
-    // Brief control hint
-    {
-        std::vector<std::string> hint;
-        std::string t = title;
-        if ((int)t.size() > 16) t.resize(16);
-        hint.push_back(t);
-        hint.push_back("");
-        hint.push_back("A/B: navigate");
-        hint.push_back("Hold A: add char");
-        hint.push_back("Hold B: delete");
-        hint.push_back("Nav to > confirm");
-        hint.push_back("Hold both: cancel");
-        hint.push_back("Enc press: add");
-        display_.writeLines(hint, -1);
-        vTaskDelay(pdMS_TO_TICKS(1800));
-    }
-
-    // Snapshot current button state so stale holds don't trigger false edges
-    {
-        InputEvent init = input_poll_fn_();
-        enc_btn_last = init.enc_btn;
-        btnA_last    = init.btnA;
-        btnB_last    = init.btnB;
-        both_last    = init.btnA && init.btnB;
-    }
-
-    render_grid();
-
-    uint32_t both_hold_ms  = 0;
-    bool     both_longfire = false;
-
-    while (true)
-    {
-        InputEvent ev = input_poll_fn_();
-        bool enc_btn = ev.enc_btn;
-        bool btnA    = ev.btnA;
-        bool btnB    = ev.btnB;
-        bool both    = btnA && btnB;
-
-        bool enc_rise = !enc_btn && enc_btn_last;
-        bool redraw   = false;
-
-        // ── A+B chord: hold LONG_PRESS_MS = cancel ────────────────────────────
-        // Brief A+B release no longer confirms (too easy to trigger accidentally).
-        // Confirm by navigating to '>' and tapping A or B, same as encoder.
-        if (both) {
-            both_hold_ms += 50;
-            if (both_hold_ms >= LONG_PRESS_MS && !both_longfire) {
-                both_longfire = true;
-                result.clear();   // cancel — return empty string
+        // Cursor overlay: invert the highlighted cell(s)
+        // Tab row "ab AB # Sym Done": ab@0, AB@3, #@6, Sym@8, Done@12
+        switch (section) {
+            case WCSect::NAME:     display_.invert_char_cells( 0,  0, 7); break;
+            case WCSect::PW:       display_.invert_char_cells( 9,  0, 7); break;
+            case WCSect::GRID: {
+                int row = gpos / 16, col = gpos % 16;
+                display_.invert_char_cells((3 + row) * 9, col, 1);
                 break;
             }
-            // While both held, reset individual button timers
-            btnA_hold_ms  = 0;
-            btnA_longfire = false;
-            btnA_streak   = 0;
-            btnB_hold_ms  = 0;
-            btnB_longfire = false;
-            btnB_streak   = 0;
-        } else {
-            both_hold_ms  = 0;
-            both_longfire = false;
+            case WCSect::TAB_ab:   display_.invert_char_cells(54,  0, 2); break;
+            case WCSect::TAB_AB:   display_.invert_char_cells(54,  3, 2); break;
+            case WCSect::TAB_NUM:  display_.invert_char_cells(54,  6, 1); break;
+            case WCSect::TAB_SYM:  display_.invert_char_cells(54,  8, 3); break;
+            case WCSect::TAB_DONE: display_.invert_char_cells(54, 12, 4); break;
         }
+    };
 
-        // ── Encoder rotation → navigate all chars linearly ────────────────────
-        if (!both && ev.delta != 0) {
-            cursor_pos = ((cursor_pos + ev.delta) % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
-            redraw = true;
+    // ── navigation ───────────────────────────────────────────────────────────
+    auto nav_fwd = [&]() {
+        switch (section) {
+            case WCSect::NAME:     section = WCSect::PW;       break;
+            case WCSect::PW:       section = WCSect::GRID; gpos = 0; break;
+            case WCSect::GRID:
+                if (gpos < cs_size() - 1) gpos++;
+                else section = WCSect::TAB_ab;
+                break;
+            case WCSect::TAB_ab:   section = WCSect::TAB_AB;   break;
+            case WCSect::TAB_AB:   section = WCSect::TAB_NUM;  break;
+            case WCSect::TAB_NUM:  section = WCSect::TAB_SYM;  break;
+            case WCSect::TAB_SYM:  section = WCSect::TAB_DONE; break;
+            case WCSect::TAB_DONE: section = WCSect::NAME;     break;
         }
+    };
 
-        // ── Button A: tap = step back (accelerating); hold = append ─────────────
-        // Rapid taps build a streak: each tap moves (streak) steps, up to MAX_STREAK.
-        // A pause longer than TAP_WINDOW_MS resets the streak to 1.
-        if (!btnA) btnA_inter_ms += 50;
-        if (btnA_inter_ms >= TAP_WINDOW_MS) btnA_streak = 0;
+    auto nav_bwd = [&]() {
+        switch (section) {
+            case WCSect::NAME:     section = WCSect::TAB_DONE; break;
+            case WCSect::PW:       section = WCSect::NAME;     break;
+            case WCSect::GRID:
+                if (gpos > 0) gpos--;
+                else section = WCSect::PW;
+                break;
+            case WCSect::TAB_ab:   section = WCSect::GRID; gpos = cs_size() - 1; break;
+            case WCSect::TAB_AB:   section = WCSect::TAB_ab;   break;
+            case WCSect::TAB_NUM:  section = WCSect::TAB_AB;   break;
+            case WCSect::TAB_SYM:  section = WCSect::TAB_NUM;  break;
+            case WCSect::TAB_DONE: section = WCSect::TAB_SYM;  break;
+        }
+    };
 
-        if (btnA && !both) {
-            if (!btnA_last) {
-                btnA_hold_ms  = 0;
-                btnA_longfire = false;
-            } else if (!btnA_longfire) {
-                btnA_hold_ms += 50;
-                if (btnA_hold_ms >= LONG_PRESS_MS) {
-                    btnA_longfire = true;
-                    btnA_streak   = 0;  // hold action breaks streak
-                    if (cursor_pos != GRID_OK_POS && result.size() < max_len) {
-                        result += cur_char();
-                        redraw = true;
-                    }
-                }
+    // Long A action (sets submitted if DONE with non-empty ssid)
+    auto long_a = [&]() {
+        switch (section) {
+            case WCSect::NAME:
+                actfield = WCField::NAME; section = WCSect::GRID; gpos = 0; break;
+            case WCSect::PW:
+                actfield = WCField::PW;   section = WCSect::GRID; gpos = 0; break;
+            case WCSect::GRID: {
+                char c = cs_ptr()[gpos];
+                if (c && act_text().size() < 63)
+                    act_text() += (c == '_') ? ' ' : c;
+                break; // cursor stays on same char
             }
-        } else {
-            if (btnA_last && !btnA_longfire && !both_last) {
-                // Tap: confirm if on '>', else navigate backward with acceleration
-                if (cursor_pos == GRID_OK_POS) {
-                    break;
+            case WCSect::TAB_ab:
+                actset = WCSet::ab;  section = WCSect::GRID; gpos = 0; break;
+            case WCSect::TAB_AB:
+                actset = WCSet::AB;  section = WCSect::GRID; gpos = 0; break;
+            case WCSect::TAB_NUM:
+                actset = WCSet::NUM; section = WCSect::GRID; gpos = 0; break;
+            case WCSect::TAB_SYM:
+                actset = WCSet::SYM; section = WCSect::GRID; gpos = 0; break;
+            case WCSect::TAB_DONE:
+                if (!ssid.empty()) submitted = true;
+                break;
+        }
+    };
+
+    // Long B — backspace from active field (GRID section only)
+    auto long_b = [&]() {
+        if (section == WCSect::GRID && !act_text().empty())
+            act_text().pop_back();
+    };
+
+    static constexpr uint32_t LONG_PRESS_MS = 800;
+    static constexpr uint32_t TAP_WINDOW_MS = 400;
+    static constexpr int      MAX_STREAK    = 8;
+
+    bool     enc_btn_last = false, btnA_last = false;
+    bool     btnB_last    = false, both_last = false;
+    uint32_t enc_hold_ms  = 0;  bool enc_longfire  = false;
+    uint32_t btnA_hold_ms = 0;  bool btnA_longfire = false;
+    uint32_t btnB_hold_ms = 0;  bool btnB_longfire = false;
+    uint32_t both_hold_ms = 0;  bool both_longfire = false;
+    int      btnA_streak  = 0;  uint32_t btnA_inter_ms = 999;
+    int      btnB_streak  = 0;  uint32_t btnB_inter_ms = 999;
+
+    // ── outer loop: editing → confirm → back-to-editing or return ────────────
+    while (true)
+    {
+        // Snapshot buttons at (re-)entry to avoid stale-hold false triggers
+        {
+            InputEvent init = input_poll_fn_();
+            enc_btn_last = init.enc_btn; btnA_last = init.btnA;
+            btnB_last    = init.btnB;    both_last = init.btnA && init.btnB;
+        }
+        submitted = false;
+        enc_hold_ms  = 0; enc_longfire  = false;
+        btnA_hold_ms = 0; btnA_longfire = false;
+        btnB_hold_ms = 0; btnB_longfire = false;
+        both_hold_ms = 0; both_longfire = false;
+        btnA_streak  = 0; btnA_inter_ms = 999;
+        btnB_streak  = 0; btnB_inter_ms = 999;
+
+        render();
+
+        // ── editing event loop ────────────────────────────────────────────────
+        while (!submitted)
+        {
+            InputEvent ev = input_poll_fn_();
+            bool enc_btn  = ev.enc_btn;
+            bool btnA     = ev.btnA;
+            bool btnB     = ev.btnB;
+            bool both     = btnA && btnB;
+            bool enc_rise = !enc_btn && enc_btn_last;
+            bool redraw   = false;
+
+            // ── A+B hold: cancel ──────────────────────────────────────────────
+            if (both) {
+                both_hold_ms += 50;
+                if (both_hold_ms >= LONG_PRESS_MS && !both_longfire) {
+                    both_longfire = true;
+                    ssid.clear(); pw.clear();
+                    return false;
                 }
-                if (btnA_inter_ms < TAP_WINDOW_MS) {
-                    btnA_streak = (btnA_streak < MAX_STREAK) ? btnA_streak + 1 : MAX_STREAK;
-                } else {
-                    btnA_streak = 1;
-                }
-                btnA_inter_ms = 0;
-                cursor_pos = ((cursor_pos - btnA_streak) % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
+                btnA_hold_ms = 0; btnA_longfire = false; btnA_streak = 0;
+                btnB_hold_ms = 0; btnB_longfire = false; btnB_streak = 0;
+            } else {
+                both_hold_ms = 0; both_longfire = false;
+            }
+
+            // ── Encoder rotation: navigate ────────────────────────────────────
+            if (!both && ev.delta != 0) {
+                int steps = ev.delta;
+                if (steps > 0) { while (steps-- > 0) nav_fwd(); }
+                else           { while (steps++ < 0) nav_bwd(); }
                 redraw = true;
             }
-            btnA_hold_ms  = 0;
-            btnA_longfire = false;
-        }
 
-        // ── Button B: tap = step fwd (accelerating); hold = backspace ───────────
-        if (!btnB) btnB_inter_ms += 50;
-        if (btnB_inter_ms >= TAP_WINDOW_MS) btnB_streak = 0;
+            // ── Button A: tap = nav_bwd (accelerating); hold = Long A ─────────
+            if (!btnA) btnA_inter_ms += 50;
+            if (btnA_inter_ms >= TAP_WINDOW_MS) btnA_streak = 0;
 
-        if (btnB && !both) {
-            if (!btnB_last) {
-                btnB_hold_ms  = 0;
-                btnB_longfire = false;
-            } else if (!btnB_longfire) {
-                btnB_hold_ms += 50;
-                if (btnB_hold_ms >= LONG_PRESS_MS) {
-                    btnB_longfire = true;
-                    btnB_streak   = 0;  // hold action breaks streak
-                    if (!result.empty()) {
-                        result.pop_back();
-                        redraw = true;
+            if (btnA && !both) {
+                if (!btnA_last) {
+                    btnA_hold_ms = 0; btnA_longfire = false;
+                } else if (!btnA_longfire) {
+                    btnA_hold_ms += 50;
+                    if (btnA_hold_ms >= LONG_PRESS_MS) {
+                        btnA_longfire = true; btnA_streak = 0;
+                        long_a(); redraw = true;
                     }
                 }
-            }
-        } else {
-            if (btnB_last && !btnB_longfire && !both_last) {
-                // Tap: confirm if on '>', else navigate forward with acceleration
-                if (cursor_pos == GRID_OK_POS) {
-                    break;
-                }
-                if (btnB_inter_ms < TAP_WINDOW_MS) {
-                    btnB_streak = (btnB_streak < MAX_STREAK) ? btnB_streak + 1 : MAX_STREAK;
-                } else {
-                    btnB_streak = 1;
-                }
-                btnB_inter_ms = 0;
-                cursor_pos = (cursor_pos + btnB_streak) % GRID_SIZE;
-                redraw = true;
-            }
-            btnB_hold_ms  = 0;
-            btnB_longfire = false;
-        }
-
-        // ── Encoder: long press = backspace; short press = append / confirm ───
-        if (enc_btn) {
-            if (!enc_longfire) {
-                enc_hold_ms += 50;
-                if (enc_hold_ms >= LONG_PRESS_MS) {
-                    enc_longfire = true;
-                    if (!result.empty()) {
-                        result.pop_back();
-                        redraw = true;
-                    }
-                }
-            }
-        } else {
-            if (enc_rise && !enc_longfire) {
-                if (cursor_pos == GRID_OK_POS) {
-                    break;  // encoder press on '>' = confirm (encoder-only)
-                } else if (result.size() < max_len) {
-                    result += cur_char();
+            } else {
+                if (btnA_last && !btnA_longfire && !both_last) {
+                    btnA_streak = (btnA_inter_ms < TAP_WINDOW_MS)
+                        ? (btnA_streak < MAX_STREAK ? btnA_streak + 1 : MAX_STREAK)
+                        : 1;
+                    btnA_inter_ms = 0;
+                    for (int s = 0; s < btnA_streak; s++) nav_bwd();
                     redraw = true;
                 }
+                btnA_hold_ms = 0; btnA_longfire = false;
             }
-            enc_hold_ms  = 0;
-            enc_longfire = false;
+
+            // ── Button B: tap = nav_fwd (accelerating); hold = Long B ─────────
+            if (!btnB) btnB_inter_ms += 50;
+            if (btnB_inter_ms >= TAP_WINDOW_MS) btnB_streak = 0;
+
+            if (btnB && !both) {
+                if (!btnB_last) {
+                    btnB_hold_ms = 0; btnB_longfire = false;
+                } else if (!btnB_longfire) {
+                    btnB_hold_ms += 50;
+                    if (btnB_hold_ms >= LONG_PRESS_MS) {
+                        btnB_longfire = true; btnB_streak = 0;
+                        long_b(); redraw = true;
+                    }
+                }
+            } else {
+                if (btnB_last && !btnB_longfire && !both_last) {
+                    btnB_streak = (btnB_inter_ms < TAP_WINDOW_MS)
+                        ? (btnB_streak < MAX_STREAK ? btnB_streak + 1 : MAX_STREAK)
+                        : 1;
+                    btnB_inter_ms = 0;
+                    for (int s = 0; s < btnB_streak; s++) nav_fwd();
+                    redraw = true;
+                }
+                btnB_hold_ms = 0; btnB_longfire = false;
+            }
+
+            // ── Encoder: long press = Long B; short press = Long A ────────────
+            if (enc_btn) {
+                if (!enc_longfire) {
+                    enc_hold_ms += 50;
+                    if (enc_hold_ms >= LONG_PRESS_MS) {
+                        enc_longfire = true;
+                        long_b(); redraw = true;
+                    }
+                }
+            } else {
+                if (enc_rise && !enc_longfire) {
+                    long_a(); redraw = true;
+                }
+                enc_hold_ms = 0; enc_longfire = false;
+            }
+
+            if (redraw) render();
+
+            enc_btn_last = enc_btn;
+            btnA_last    = btnA;
+            btnB_last    = btnB;
+            both_last    = both;
+            vTaskDelay(pdMS_TO_TICKS(50));
+        } // editing loop
+
+        // ── Confirm screen ────────────────────────────────────────────────────
+        {
+            auto trunc16 = [](const std::string &s) -> std::string {
+                if ((int)s.size() <= 16) return s;
+                return s.substr(0, 15) + "~";
+            };
+            std::vector<std::string> cl;
+            cl.push_back("  Confirm WiFi?");
+            cl.push_back("");
+            cl.push_back("Name:");
+            cl.push_back(trunc16(ssid));
+            cl.push_back("PW:");
+            cl.push_back(pw.empty() ? "(none)" : trunc16(pw));
+            cl.push_back("A:back  B/Enc:ok");
+            display_.writeLines(cl, -1);
+
+            bool go_back = false, confirmed = false;
+            bool ce_last = false, ca_last = false, cb_last = false, cboth_last = false;
+            uint32_t ce_hold = 0; bool ce_long = false;
+            uint32_t ca_hold = 0; bool ca_long = false;
+            uint32_t cboth_hold = 0; bool cboth_long = false;
+            // Wait for all buttons to be fully released before entering the
+            // confirm loop.  Without this, the Long-A release that triggered
+            // "Done" arrives as the first event and fires "back" immediately.
+            while (true) {
+                InputEvent ev = input_poll_fn_();
+                if (!ev.enc_btn && !ev.btnA && !ev.btnB) break;
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            vTaskDelay(pdMS_TO_TICKS(50)); // one extra tick of margin
+            // All inputs are now clear; start with all _last = false
+            while (!confirmed && !go_back) {
+                InputEvent ev = input_poll_fn_();
+                bool ce = ev.enc_btn, ca = ev.btnA, cb = ev.btnB;
+                bool cboth = ca && cb;
+                bool ce_rise = !ce && ce_last;
+
+                // A+B hold: full cancel
+                if (cboth) {
+                    cboth_hold += 50;
+                    if (cboth_hold >= LONG_PRESS_MS && !cboth_long) {
+                        cboth_long = true;
+                        ssid.clear(); pw.clear();
+                        return false;
+                    }
+                } else { cboth_hold = 0; cboth_long = false; }
+
+                // Encoder long-press tracking (suppresses short-press on release)
+                if (ce) {
+                    if (!ce_long) { ce_hold += 50; if (ce_hold >= LONG_PRESS_MS) ce_long = true; }
+                } else { ce_hold = 0; ce_long = false; }
+
+                // Encoder short press or B tap = confirm
+                if (ce_rise && !ce_long)           confirmed = true;
+                if (!cb && cb_last && !cboth_last)  confirmed = true;
+
+                // A tap or Long A = back to editing
+                if (!ca && ca_last && !cboth_last) go_back = true;
+                if (ca && !cboth) {
+                    if (!ca_long) {
+                        ca_hold += 50;
+                        if (ca_hold >= LONG_PRESS_MS) { ca_long = true; go_back = true; }
+                    }
+                } else { ca_hold = 0; ca_long = false; }
+
+                ce_last = ce; ca_last = ca; cb_last = cb; cboth_last = cboth;
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            if (go_back) continue; // outer while(true) — re-enter editing
         }
-
-        if (redraw) render_grid();
-
-        enc_btn_last = enc_btn;
-        btnA_last    = btnA;
-        btnB_last    = btnB;
-        both_last    = both;
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    return result;
+        return true; // confirmed
+    } // outer while(true)
 }
 
 // ── set_matter_pairing_info ───────────────────────────────────────────────────
@@ -711,15 +824,14 @@ void Menu::set_matter_pairing_info(uint32_t pin, uint16_t disc,
 }
 
 // ── show_matter_pairing_screen ────────────────────────────────────────────────
-// Layout (8 lines on 128×64 SSD1306):
+// Layout (7 lines on 128×64 SSD1306, 9px line spacing):
 //   0  " Matter Pairing " (centered)
 //   1  "Go to Smart Home"
 //   2  (blank)
-//   3  (blank)
-//   4  "Disc: XXXX"
-//   5  "Code:XXXXXXXXXXX"
-//   6  (blank)
-//   7  encoder hint -or- button hint
+//   3  "Disc: XXXX"
+//   4  "Code:XXXXXXXXXXX"
+//   5  (blank)
+//   6  back hint (encoder hint only shown when encoder present)
 //
 // Returns true  = commissioned (auto-exit; proceed to main menu).
 //         false = back pressed  (encoder short press or single A/B tap).
@@ -734,13 +846,13 @@ static bool show_matter_pairing_screen(Display &display,
     display.clear();
     display.print(0, " Matter Pairing ");
     display.print(1, "Go to Smart Home");
-    // lines 2 & 3 intentionally blank
+    // line 2 intentionally blank
     snprintf(buf, sizeof(buf), "Disc: %u", (unsigned)disc);
-    display.print(4, buf);
+    display.print(3, buf);
     snprintf(buf, sizeof(buf), "Code:%.11s", code.empty() ? "see UART   " : code.c_str());
-    display.print(5, buf);
-    // line 6 intentionally blank
-    display.print(7, encoder_ok ? "ShrtPress: back" : "A or B: back");
+    display.print(4, buf);
+    // line 5 intentionally blank
+    display.print(6, encoder_ok ? "ShrtPress: back" : "A or B: back");
 
     if (!poll)
         return true;
@@ -811,9 +923,13 @@ Menu::SetupResult Menu::first_time_setup()
         display_.print(0, "  First-Time Setup");
         display_.print(2, choice == 0 ? "> Matter" : "  Matter");
         display_.print(3, choice == 1 ? "> Setup WiFi" : "  Setup WiFi");
-        display_.print(5, "A/B/Rot: pick");
-        display_.print(6, "LongA/Enc: ok");
-        display_.print(7, "Enc 5s:WiFiRst");
+        if (encoder_ok_) {
+            display_.print(5, "Rot/A/B: select");
+            display_.print(6, "LongA/Enc: ok");
+        } else {
+            display_.print(5, "A/B: select");
+            display_.print(6, "LongA: confirm");
+        }
     };
     render_choice();
 
@@ -900,14 +1016,12 @@ Menu::SetupResult Menu::first_time_setup()
     // Loops back to the choice screen if the user cancels (hold-both).
     while (true)
     {
-        std::string ssid = show_text_input("SSID:", false, 63);
-        if (ssid.empty())
+        std::string ssid, pass;
+        if (!show_wifi_credentials(ssid, pass))
         {
             // Cancelled — restart the whole first-time setup choice screen
             return first_time_setup();
         }
-
-        std::string pass = show_text_input("Password:", false, 63);
         // Empty pass is valid (open network); proceed regardless.
 
         NetCfg cfg = {};
@@ -1115,12 +1229,8 @@ void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
 
     netm->addChild(std::make_unique<MenuItem>("Set WiFi", [this]()
                                               {
-        // Enter SSID
-        std::string ssid = show_text_input("SSID:", false, 63);
-        if (ssid.empty()) { render(); return; }
-
-        // Enter password
-        std::string pass = show_text_input("Password:", false, 63);
+        std::string ssid, pass;
+        if (!show_wifi_credentials(ssid, pass)) { render(); return; }
 
         // Load existing config to preserve tz_override, then overwrite credentials
         NetCfg cfg;

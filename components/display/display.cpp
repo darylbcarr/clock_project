@@ -1,6 +1,6 @@
 #include "display.h"
 #include "esp_log.h"
-#include "font_latin_8x8.h"
+#include "font_display.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -92,6 +92,8 @@ bool Display::init(i2c_port_t port, uint8_t addr, int sda_pin, int scl_pin) {
 void Display::clear() {
     if (!m_initialized || m_dev == nullptr) return;
     if (m_hardware_scrolling) stopHardwareScroll();
+    m_selected_line  = -1;
+    m_display_offset = 0;
     xSemaphoreTake(m_bus_mutex, portMAX_DELAY);
     ssd1306_clear_display(m_dev, false);
     ssd1306_display_pages(m_dev);
@@ -129,17 +131,59 @@ void Display::refresh_display() {
 
     xSemaphoreTake(m_bus_mutex, portMAX_DELAY);
 
-    ssd1306_clear_display(m_dev, false);
+    // Zero the internal page buffer directly — faster than ssd1306_clear_display
+    // which sends 8 full page writes over I2C before we overwrite them anyway.
+    for (int p = 0; p < 8; p++)
+        memset(m_dev->page[p].segment, 0, SCREEN_WIDTH);
 
-    for (int visible_page = 0; visible_page < VISIBLE_LINES; visible_page++) {
-        int line_num = m_display_offset + visible_page;
-        if (line_num < MAX_LINES && m_lines[line_num][0] != '\0') {
-            bool invert = (line_num == m_selected_line);
-            esp_err_t ret = ssd1306_display_text(m_dev, visible_page,
-                                                 m_lines[line_num], invert);
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "ssd1306_display_text page=%d: %s",
-                         visible_page, esp_err_to_name(ret));
+    // Render each visible line at 9-pixel spacing (8px glyph + 1px gap).
+    // Because LINE_HEIGHT (9) is not a multiple of the hardware page size (8),
+    // each glyph is bit-shifted across two consecutive pages.
+    for (int vis = 0; vis < VISIBLE_LINES; vis++) {
+        int line_num = m_display_offset + vis;
+        if (line_num >= MAX_LINES || m_lines[line_num][0] == '\0') continue;
+
+        bool    invert = (line_num == m_selected_line);
+        int     y      = vis * LINE_HEIGHT;   // top pixel row of this line
+        int     page0  = y / 8;              // primary page index
+        int     shift  = y % 8;             // bit offset within page0
+        uint8_t bg_lo  = (uint8_t)(0xFF << shift);                      // background mask, page0
+        uint8_t bg_hi  = shift ? (uint8_t)(0xFF >> (8 - shift)) : 0;   // background mask, page1
+
+        // White background strip for selected (inverted) lines
+        if (invert) {
+            for (int x = 0; x < SCREEN_WIDTH; x++) {
+                m_dev->page[page0].segment[x] |= bg_lo;
+                if (bg_hi && page0 + 1 < 8)
+                    m_dev->page[page0 + 1].segment[x] |= bg_hi;
+            }
+        }
+
+        // Render characters — split each 8-bit font column across two pages.
+        // Normal lines: OR glyph bits onto black background → white text.
+        // Inverted lines: background is already white (set above); XOR the
+        // original glyph bits to clear char pixels to black → black text on
+        // white.  Using |= on an inverted glyph would leave everything white
+        // because ORing zeros onto ones does not clear them.
+        const char *text = m_lines[line_num];
+        for (int ci = 0; ci < 16 && text[ci] != '\0'; ci++) {
+            int     x_base = ci * 8;
+            uint8_t ch     = (uint8_t)(unsigned char)text[ci];
+            for (int col = 0; col < CHAR_HEIGHT; col++) {
+                int     x     = x_base + col;
+                if (x >= SCREEN_WIDTH) break;
+                uint8_t glyph = font_cp437[ch][col];
+                uint8_t lo = (uint8_t)(glyph << shift);
+                uint8_t hi = shift ? (uint8_t)(glyph >> (8 - shift)) : 0;
+                if (invert) {
+                    m_dev->page[page0].segment[x] ^= lo;
+                    if (hi && page0 + 1 < 8)
+                        m_dev->page[page0 + 1].segment[x] ^= hi;
+                } else {
+                    m_dev->page[page0].segment[x] |= lo;
+                    if (hi && page0 + 1 < 8)
+                        m_dev->page[page0 + 1].segment[x] |= hi;
+                }
             }
         }
     }
@@ -345,11 +389,40 @@ void Display::render_char_inverted(int page, int col, char c)
     if (page < 0 || page >= 8 || col < 0 || col >= 16) return;
 
     uint8_t inv[8];
-    const uint8_t *src = font_latin_8x8_tr[(uint8_t)(unsigned char)c];
+    const uint8_t *src = font_cp437[(uint8_t)(unsigned char)c];
     for (int i = 0; i < 8; i++) inv[i] = src[i] ^ 0xFF;
 
     xSemaphoreTake(m_bus_mutex, portMAX_DELAY);
     ssd1306_display_image(m_dev, (uint8_t)page, (uint8_t)(col * 8), inv, 8);
+    xSemaphoreGive(m_bus_mutex);
+}
+
+void Display::invert_char_cells(int y_px, int col_start, int num_cols)
+{
+    if (!m_initialized || m_dev == nullptr) return;
+    if (y_px < 0 || y_px >= SCREEN_HEIGHT) return;
+    if (col_start < 0 || col_start >= 16 || num_cols <= 0) return;
+
+    int n = num_cols;
+    if (col_start + n > 16) n = 16 - col_start;
+
+    int     page0   = y_px / 8;
+    int     shift   = y_px % 8;
+    uint8_t mask_lo = (uint8_t)(0xFF << shift);
+    uint8_t mask_hi = shift ? (uint8_t)(0xFF >> (8 - shift)) : 0;
+
+    xSemaphoreTake(m_bus_mutex, portMAX_DELAY);
+    for (int c = col_start; c < col_start + n; c++) {
+        int x_base = c * 8;
+        for (int i = 0; i < 8; i++) {
+            int x = x_base + i;
+            if (x >= SCREEN_WIDTH) break;
+            m_dev->page[page0].segment[x] ^= mask_lo;
+            if (mask_hi && page0 + 1 < 8)
+                m_dev->page[page0 + 1].segment[x] ^= mask_hi;
+        }
+    }
+    ssd1306_display_pages(m_dev);
     xSemaphoreGive(m_bus_mutex);
 }
 

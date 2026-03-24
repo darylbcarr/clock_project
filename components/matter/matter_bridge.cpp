@@ -194,7 +194,7 @@ static void ensure_unique_discriminator()
 
 // ── start ─────────────────────────────────────────────────────────────────────
 
-esp_err_t MatterBridge::start()
+esp_err_t MatterBridge::start(bool fresh_commissioning)
 {
     ensure_unique_discriminator();
     ESP_LOGI(TAG, "Starting Matter stack");
@@ -204,33 +204,30 @@ esp_err_t MatterBridge::start()
         return err;
     }
 
-    // ── Coex fix: clear stale WiFi credentials on uncommissioned device ───
-    // esp_wifi_set_config() persists the SSID/password in the WiFi driver's
-    // own NVS namespace.  A Matter factory-reset clears CHIP's commissioning
-    // data (chip-kvs) but NOT the WiFi driver NVS, so on every fresh
-    // commissioning attempt CHIP's ConnectivityManager calls
-    // esp_wifi_connect() at boot — while BLE is advertising — and the coex
-    // module fails the WiFi 4-way handshake ("Coexist: Wi-Fi connect fail")
-    // every ~5 s, looping indefinitely.
+    // ── Coex fix: clear stale WiFi credentials on fresh commissioning ────────
+    // esp_wifi_set_config() persists credentials in the WiFi driver's NVS.
+    // On a fresh Matter commissioning attempt, those stale credentials cause
+    // CHIP's ConnectivityManager to call esp_wifi_connect() while BLE is
+    // advertising, and the coex module fails the WiFi 4-way handshake
+    // ("Coexist: Wi-Fi connect fail") every ~5 s.  Clearing the config stops
+    // CHIP from retrying, giving BLE uncontested radio time.
     //
-    // If the device has no fabric yet, clear the WiFi config so
-    // IsWiFiStationProvisioned() returns false.  CHIP then stops retrying
-    // after the first coex-induced disconnect, giving BLE uncontested radio
-    // time during commissioning.  After AddNOC, CHIP receives fresh
-    // credentials and calls esp_wifi_connect() when BLE traffic has dropped
-    // to ~2.5 s cadence, allowing the handshake to complete.
-    //
-    // Devices that ARE already commissioned (FabricCount > 0) are left
-    // untouched so they reconnect to WiFi normally on reboot.
-    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+    // This fix is ONLY applied when fresh_commissioning=true (i.e. the caller
+    // just wiped CHIP_KVS and is starting a new commissioning session).  On
+    // normal reboots (fresh_commissioning=false) the fix must NOT run:
+    //   • WiFi-path devices (never Matter-commissioned) always have
+    //     FabricCount==0, so the old unconditional check fired every boot,
+    //     clearing the stored WiFi credentials and causing intermittent
+    //     connection failures due to BLE+WiFi coexistence.
+    //   • Commissioned devices (FabricCount>0) reconnect using the credentials
+    //     delivered by CHIP's own provisioning — leave those untouched.
+    if (fresh_commissioning) {
         wifi_config_t empty = {};
         if (esp_wifi_set_config(WIFI_IF_STA, &empty) == ESP_OK) {
-            ESP_LOGI(TAG, "No fabric — cleared stale WiFi credentials (BLE coex fix)");
+            ESP_LOGI(TAG, "Fresh commissioning — cleared WiFi driver NVS (BLE coex fix)");
         } else {
             ESP_LOGW(TAG, "Failed to clear WiFi credentials");
         }
-    } else {
-        ESP_LOGI(TAG, "Fabric present — keeping WiFi credentials for reconnect");
     }
 
     // Force ColorMode to HS (0) so Alexa classifies both strips as Color Lights
@@ -493,6 +490,14 @@ esp_err_t MatterBridge::open_commissioning_window()
 bool MatterBridge::is_commissioned() const
 {
     return chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
+}
+
+// ── disable_ble_advertising ───────────────────────────────────────────────────
+
+void MatterBridge::disable_ble_advertising()
+{
+    chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+    ESP_LOGI(TAG, "BLE advertising disabled (WiFi-only mode)");
 }
 
 // ── get_commissioning_info ────────────────────────────────────────────────────

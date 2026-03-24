@@ -349,6 +349,7 @@ void Networking::start_mdns()
     // On the direct-WiFi path (no Matter), our call succeeds and we own mDNS.
     esp_err_t err = mdns_init();
     const bool we_own = (err == ESP_OK);
+    mdns_delegate_mode_ = !we_own;  // watchdog re-uses this to know delegate mode
 
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "mDNS init failed: %s", esp_err_to_name(err));
@@ -356,21 +357,34 @@ void Networking::start_mdns()
     }
 
     if (we_own) {
-        // Our mdns_init() was called after the IP event already fired, so the
-        // predef handler missed it — enable the PCB explicitly.
-        if (netif_) {
-            mdns_netif_action(netif_, MDNS_EVENT_ENABLE_IP4);
-        }
-        // ── Set hostname as global ────────────────────────────────────────────
+        // Our mdns_init() was called after the IP event already fired so the
+        // predefined event handler missed the IP_EVENT_GOT_IP.  We must enable
+        // the PCB manually via mdns_netif_action(ENABLE_IP4).
+        //
+        // ORDERING MATTERS: set hostname and services BEFORE enabling the PCB.
+        // _mdns_enable_pcb() calls _mdns_probe_all_pcbs() internally; if the
+        // hostname is already stored at that moment the probe starts immediately
+        // with the correct name.  Enabling first (old order) queues the PCB
+        // creation in the mDNS daemon task; mdns_hostname_set then runs before
+        // the daemon processes the enable — the hostname is stored but there is
+        // no PCB yet to probe, so mDNS never announces itself until something
+        // external (e.g. a website hostname-change call) retriggers it.
+
+        // 1. Set hostname and instance name.
         mdns_hostname_set(hostname);
         mdns_instance_name_set(hostname);
-        ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
 
-        // Register HTTP service (SRV target = our hostname).
+        // 2. Register HTTP service.
         esp_err_t svc = mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
         if (svc != ESP_OK && svc != ESP_ERR_INVALID_ARG) {
             ESP_LOGW(TAG, "mdns_service_add: %s", esp_err_to_name(svc));
         }
+
+        // 3. Enable the PCB last — daemon creates it and immediately probes.
+        if (netif_) {
+            mdns_netif_action(netif_, MDNS_EVENT_ENABLE_IP4);
+        }
+        ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
 
         // ── Matter path race: chip[DIS] will overwrite our global hostname ────
         // When ssid_ is empty, Matter manages WiFi. Our mdns_init() occasionally
@@ -554,7 +568,10 @@ void Networking::mdns_task(void* arg)
     // every 30 s if something (mDNS re-init, PCB restart, Matter re-advertise)
     // ever removes it.  This is the recovery path that covers all unknown removal
     // scenarios without needing to pinpoint the exact culprit.
-    if (self->ssid_[0] == '\0') {
+    // Run watchdog whenever Matter owns mDNS and we registered a delegate hostname.
+    // Originally guarded by ssid_[0]=='\0' (pure Matter-WiFi path), but Matter
+    // now also starts on WiFi-only devices — use the delegate-mode flag instead.
+    if (self->mdns_delegate_mode_) {
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(10000));
 

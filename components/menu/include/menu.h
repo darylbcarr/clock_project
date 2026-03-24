@@ -235,13 +235,10 @@ private:
      *   Button B        → add space
      *   Both A+B        → confirm and return
      *
-     * @param title    Displayed on row 0 (e.g. "SSID:" or "Password:")
-     * @param mask     If true, entered characters are shown as '*'
-     * @param max_len  Maximum number of characters to accept (default 63)
+     * Both fields are entered on one screen.
+     * Returns true = confirmed (ssid non-empty), false = cancelled.
      */
-    std::string show_text_input(const std::string& title,
-                                bool mask    = false,
-                                size_t max_len = 63);
+    bool show_wifi_credentials(std::string &ssid, std::string &pw);
 
     // Blocks until dismiss_fn_ fires or 30s timeout
     void wait_for_dismiss();

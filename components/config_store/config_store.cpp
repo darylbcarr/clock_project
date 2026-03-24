@@ -113,10 +113,11 @@ bool ConfigStore::save(const NetCfg& c)
 {
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    nvs_set_str(h, "net_ssid",  c.ssid);
-    nvs_set_str(h, "net_pass",  c.password);
-    nvs_set_str(h, "net_tz",    c.tz_override);
-    nvs_set_str(h, "net_mdns",  c.mdns_hostname);
+    nvs_set_str(h, "net_ssid",      c.ssid);
+    nvs_set_str(h, "net_pass",      c.password);
+    nvs_set_str(h, "net_tz",        c.tz_override);
+    nvs_set_str(h, "net_mdns",      c.mdns_hostname);
+    nvs_set_u8 (h, "net_wifi_only", c.wifi_only ? 1 : 0);
     bool ok = (nvs_commit(h) == ESP_OK);
     nvs_close(h);
     return ok;
@@ -131,6 +132,7 @@ bool ConfigStore::load(NetCfg& c)
     len = sizeof(c.password);       nvs_get_str(h, "net_pass",  c.password,       &len);
     len = sizeof(c.tz_override);    nvs_get_str(h, "net_tz",    c.tz_override,    &len);
     len = sizeof(c.mdns_hostname);  nvs_get_str(h, "net_mdns",  c.mdns_hostname,  &len);
+    uint8_t wo = 0; nvs_get_u8(h, "net_wifi_only", &wo); c.wifi_only = (wo != 0);
     nvs_close(h);
     return true;
 }

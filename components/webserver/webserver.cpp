@@ -39,6 +39,7 @@ void WebServer::start()
     cfg.max_open_sockets = 7;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
+    cfg.send_wait_timeout = 5;  // keep default; WS dead-socket cleanup uses sess_trigger_close
 
     if (httpd_start(&server_, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -417,7 +418,10 @@ static void do_ws_broadcast(void* arg)
         pkt.len              = a->len;
         for (size_t i = 0; i < clients; i++) {
             if (httpd_ws_get_fd_info(a->hd, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
-                httpd_ws_send_frame_async(a->hd, fds[i], &pkt);
+                if (httpd_ws_send_frame_async(a->hd, fds[i], &pkt) != ESP_OK) {
+                    // Socket is dead — close it so future broadcasts skip it
+                    httpd_sess_trigger_close(a->hd, fds[i]);
+                }
             }
         }
     }

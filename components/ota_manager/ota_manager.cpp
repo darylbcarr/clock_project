@@ -169,6 +169,14 @@ bool OtaManager::fetch_version_info(char* out_ver, size_t ver_len,
     cfg.method            = HTTP_METHOD_GET;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
+    // HTTPS requires ~50 KB for mbedTLS context; skip if heap is too low.
+    if (esp_get_free_heap_size() < 60 * 1024) {
+        ESP_LOGW(TAG, "Low heap (%lu B) — skipping version check",
+                 (unsigned long)esp_get_free_heap_size());
+        free(buf);
+        return false;
+    }
+
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { free(buf); return false; }
 

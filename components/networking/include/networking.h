@@ -150,6 +150,7 @@ private:
 
     bool begun_               = false;  // guards against double-call from Matter path
     bool matter_commissioned_ = false;  // set by main before begin(); enables mDNS on Matter path
+    bool mdns_delegate_mode_  = false;  // true when Matter owns mDNS and we use a delegate hostname
 
     // Module-static pointer so the SNTP callback (C linkage) can reach us
     static Networking* s_instance_;

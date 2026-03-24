@@ -728,7 +728,13 @@ extern "C" void app_main()
     // can decide whether mDNS is safe to start on the Matter WiFi path:
     //   false → first-time commissioning, BLE is active → suppress mDNS
     //   true  → returning device, BLE is inactive on this boot → allow mDNS
-    const bool matter_commissioned = is_matter_commissioned_quick();
+    // wifi_only: set during first-time setup when the user chose WiFi over Matter.
+    // When true, the Matter stack (BLE, CHIP) is never started on any boot,
+    // avoiding all radio coexistence issues and freeing ~150 KB of heap.
+    // Cleared automatically when WiFi credentials are erased (A+B factory reset).
+    const bool wifi_only = netCfg.wifi_only;
+
+    const bool matter_commissioned = wifi_only ? false : is_matter_commissioned_quick();
     s_net.set_matter_commissioned(matter_commissioned);
 
     bool did_first_time_setup = false;
@@ -741,8 +747,14 @@ extern "C" void app_main()
 
             if (result == Menu::SetupResult::WiFiSaved) {
                 ConfigStore::load(netCfg);
+                // Persist the WiFi-only choice so Matter never starts on subsequent boots.
+                netCfg.wifi_only = true;
+                ConfigStore::save(netCfg);
                 wifi_ssid = (netCfg.ssid[0] != '\0') ? netCfg.ssid : WIFI_SSID_DEFAULT;
                 wifi_pass = (netCfg.password[0] != '\0') ? netCfg.password : WIFI_PASSWORD_DEFAULT;
+                // Hand position is unknown on a fresh device — don't let the first
+                // SNTP sync drive the motor to a random target.
+                s_clock.suppress_first_sync_align();
                 did_first_time_setup = true;
                 setup_done = true;
 
@@ -757,7 +769,7 @@ extern "C" void app_main()
                     // causes CHIP to find FabricCount > 0, disable BLE
                     // immediately, and print "Fabric already commissioned."
                     clear_matter_commissioning_data();
-                    s_matter.start();
+                    s_matter.start(true);  // fresh_commissioning=true: apply BLE coex fix
                     matter_started = true;
                     refresh_matter_pairing_info();  // discriminator now correct
 
@@ -783,10 +795,17 @@ extern "C" void app_main()
         }
     }
 
-    // ── 4c. Start Matter stack (returning / WiFi-path devices) ───────────────
-    if (!matter_started) {
+    // ── 4c. Start Matter stack (returning devices only) ──────────────────────
+    // Skipped entirely when wifi_only=true (user chose WiFi at first-time setup).
+    // For first-time WiFi setup, Matter start is deferred until after WiFi
+    // connects (section 5a).  Here we start it early so the LED endpoints are
+    // available if the device is already commissioned.
+    // If the device has no fabric, Matter will start BLE advertising; section 5b
+    // disables it once WiFi connects so BLE does not interfere with the radio.
+    if (!wifi_only && !matter_started && !did_first_time_setup) {
         s_matter.start();
         refresh_matter_pairing_info();  // discriminator now correct
+        matter_started = true;
     }
 
     // ── 5. Networking — async WiFi + SNTP + geolocation ──────────────────────
@@ -825,6 +844,19 @@ extern "C" void app_main()
             clear_wifi_credentials();
             esp_restart();
         }
+
+        // WiFi connected — now safe to start Matter (BLE coex no longer a risk
+        // since WiFi is already associated and the handshake is complete).
+        // Skipped entirely on the wifi_only path (Matter was never wanted).
+        if (!wifi_only && !matter_started) {
+            s_matter.start();
+            refresh_matter_pairing_info();
+            matter_started = true;
+            // Stop BLE if no fabric — prevents radio contention.
+            if (!s_matter.is_commissioned()) {
+                s_matter.disable_ble_advertising();
+            }
+        }
     }
 
     // ── 5b. For returning devices — verify WiFi connects within 15 s ─────────
@@ -841,6 +873,14 @@ extern "C" void app_main()
         for (int i = 0; i < 30 && !connected; i++) {   // up to 15 s
             vTaskDelay(pdMS_TO_TICKS(500));
             connected = s_net.is_connected();
+        }
+
+        if (!wifi_only && connected && !s_matter.is_commissioned()) {
+            // WiFi is up but device has no Matter fabric — stop BLE advertising
+            // that Matter started in section 4c.  Without this, slow BLE adverts
+            // (500 ms interval) compete with WiFi for the radio and cause
+            // persistent WebSocket drops.  open_commissioning_window() re-enables.
+            s_matter.disable_ble_advertising();
         }
 
         if (!connected) {
