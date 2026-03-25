@@ -292,8 +292,8 @@ void Networking::on_got_ip(esp_netif_ip_info_t* ip_info)
     // Launch geolocation and mDNS in separate tasks — both must not run
     // inside the event handler callback (mdns_init registers its own event
     // handlers and blocks briefly; doing so here can deadlock the event loop).
-    xTaskCreate(geo_task,  "geo",      6144, this, 4, nullptr);
-    xTaskCreate(mdns_task, "net_mdns", 5120, this, 3, nullptr);
+    xTaskCreate(geo_task,  "geo",      4096, this, 4, nullptr);
+    xTaskCreate(mdns_task, "net_mdns", 4096, this, 3, nullptr);
 }
 
 void Networking::on_wifi_disconnected()
@@ -612,9 +612,36 @@ void Networking::do_geolocation()
                  tz_override_);
         return;
     }
-    if (!fetch_geolocation()) {
-        ESP_LOGW(TAG, "Geolocation failed — timezone may be incorrect");
+
+    // Try immediately; on failure, retry with increasing delays.
+    // Retries handle transient DNS failures after WiFi reconnect (e.g.
+    // after BLE commissioning where WiFi just reconnected from coex instability).
+    static constexpr int RETRY_DELAYS_S[] = { 5, 15, 30 };
+    static constexpr int MAX_ATTEMPTS = 1 + 3;
+
+    // Wait for heap to recover before making any HTTP request.
+    // During BLE commissioning heap can drop to tens of bytes; plain HTTP needs
+    // ~8 KB.  60 KB is well above the danger zone and below the ~81 KB stable
+    // Matter-mode heap, so this check passes immediately post-commissioning.
+    static constexpr size_t HEAP_MIN_BYTES = 60 * 1024;
+    for (int waited = 0; esp_get_free_heap_size() < HEAP_MIN_BYTES && waited < 30; ++waited) {
+        ESP_LOGW(TAG, "Geolocation: low heap (%lu B) — waiting 1s",
+                 (unsigned long)esp_get_free_heap_size());
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
+
+    for (int i = 0; i < MAX_ATTEMPTS; ++i) {
+        if (i > 0) {
+            ESP_LOGI(TAG, "Geolocation retry %d/%d in %ds...",
+                     i, MAX_ATTEMPTS - 1, RETRY_DELAYS_S[i - 1]);
+            vTaskDelay(pdMS_TO_TICKS(RETRY_DELAYS_S[i - 1] * 1000));
+        }
+        if (fetch_geolocation()) {
+            return;
+        }
+        ESP_LOGW(TAG, "Geolocation attempt %d/%d failed", i + 1, MAX_ATTEMPTS);
+    }
+    ESP_LOGE(TAG, "Geolocation failed after all retries — timezone will remain UTC");
 }
 
 bool Networking::fetch_geolocation()

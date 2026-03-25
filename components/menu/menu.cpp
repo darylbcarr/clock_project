@@ -6,6 +6,7 @@
  *   Main
  *   ├── Clock
  *   │   ├── Set Time          (set-time using current SNTP)
+ *   │   ├── Stop Movement     (cancel in-progress motor move)
  *   │   ├── Set Clock         (manual HH:MM entry via encoder)
  *   │   ├── Microstep Fwd     (single microstep forward)
  *   │   ├── Microstep Bwd     (single microstep backward)
@@ -1189,6 +1190,12 @@ void Menu::build(ClockManager &cm, Networking &net, LedManager &leds)
     clk->addChild(std::make_unique<MenuItem>("Set Time", [this, &cm]()
                                              { post_action([&cm]()
                                                            { cm.cmd_set_time(-1, -1); }); }));
+
+    // Stop an in-progress motor movement (boot SNTP sync or menu Set Time).
+    // Called directly — NOT via post_action — so encoder_task can invoke it
+    // while clock_task or action_task is blocking inside cmd_set_time.
+    clk->addChild(std::make_unique<MenuItem>("Stop Movement", [&cm]()
+                                             { cm.cmd_cancel_move(); }));
 
     clk->addChild(std::make_unique<MenuItem>("Advance 1Min", [this, &cm]()
                                              { post_action([&cm]()

@@ -52,6 +52,20 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # calling mdns_hostname_set, so Matter's operational-node ad is unaffected.
 CONFIG_USE_MINIMAL_MDNS=n
 
+# ── Heap conservation during BLE commissioning ───────────────────────────────
+# BLE commissioning consumes ~70 KB of heap.  Reducing WiFi static RX buffers
+# and NimBLE MSYS pool sizes recovers ~12 KB for Matter packet buffer allocation.
+#
+# WiFi static RX buffers: each is 1600 B.  6 is sufficient for normal STA use.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+#
+# NimBLE MSYS pools: reduced conservatively to recover heap without impacting
+# BLE commissioning throughput.
+# MSYS1 (small pkts): 12→8 blocks × 256 B = saves 1024 B
+# MSYS2 (large pkts): 24→16 blocks × 320 B = saves 2560 B
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=8
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=16
+
 # ── IRAM reduction ───────────────────────────────────────────────────────────
 # WiFi ISR MUST stay in IRAM (default=y) for reliable BLE+WiFi coexistence.
 # When WiFi ISR runs from flash (=n), latency during BLE radio activity is

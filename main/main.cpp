@@ -899,7 +899,15 @@ extern "C" void app_main()
     s_webserver.start();
 
     // ── 4b. OTA update checker — background task, waits for WiFi then polls ──
-    s_ota.start(s_display, [&]() { return s_net.is_connected(); });
+    // Skip during Matter first-time commissioning: BLE + WiFi + Matter already
+    // consume nearly all available heap (~8 KB free).  The 12 KB OTA stack would
+    // push PacketBuffer allocations over the edge, causing Matter CASE failures.
+    // OTA starts normally on every subsequent reboot (matter_commissioned=true).
+    if (!did_first_time_setup || wifi_only) {
+        s_ota.start(s_display, [&]() { return s_net.is_connected(); });
+    } else {
+        ESP_LOGI(TAG, "OTA skipped during first-time Matter commissioning (heap conservation)");
+    }
 
     // ── 6. Sensor calibration + clock tick task ───────────────────────────────
     // Static ambient calibration only — does NOT move the motor.
