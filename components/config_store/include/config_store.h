@@ -33,6 +33,7 @@ struct NetCfg {
     char tz_override[80]    = {};
     char mdns_hostname[32]  = {};   ///< e.g. "clock_a1b2"; empty = derive from MAC
     bool wifi_only          = false; ///< true = WiFi chosen at first-time setup; Matter never starts
+    bool matter_commissioned = false; ///< true = Matter commissioning completed; skip first-time setup on reboot
 };
 
 /**

@@ -711,26 +711,28 @@ input[type=range]::-webkit-slider-thumb {
 
 <script>
 // ── 21 Matter-compatible colour presets ──────────────────────────────────────
+// Saturated colours are normalised so max channel = 255, matching xy_to_rgb()
+// output from Alexa/Matter.  White-balance entries keep baked-in warmth.
 const COLORS = [
-  {name:'Red',          r:255, g:20,  b:20 },
-  {name:'Orange',       r:255, g:96,  b:0  },
-  {name:'Amber',        r:255, g:191, b:0  },
-  {name:'Yellow',       r:255, g:224, b:0  },
-  {name:'Lime',         r:128, g:255, b:0  },
-  {name:'Green',        r:0,   g:224, b:64 },
-  {name:'Spring Green', r:0,   g:255, b:128},
-  {name:'Cyan',         r:0,   g:232, b:255},
-  {name:'Azure',        r:0,   g:112, b:255},
-  {name:'Blue',         r:32,  g:32,  b:255},
-  {name:'Indigo',       r:64,  g:0,   b:255},
-  {name:'Violet',       r:128, g:0,   b:255},
-  {name:'Magenta',      r:255, g:0,   b:255},
-  {name:'Pink',         r:255, g:0,   b:128},
-  {name:'Rose',         r:255, g:0,   b:64 },
-  {name:'Warm White',   r:255, g:198, b:128},
-  {name:'Soft White',   r:255, g:224, b:160},
-  {name:'Cool White',   r:208, g:232, b:255},
-  {name:'Daylight',     r:240, g:240, b:255},
+  {name:'Red',          r:255, g:0,   b:0  },  // H=0°
+  {name:'Orange',       r:255, g:128, b:0  },  // H=30°
+  {name:'Amber',        r:255, g:176, b:0  },  // H=41°
+  {name:'Yellow',       r:255, g:255, b:0  },  // H=60°
+  {name:'Lime',         r:128, g:255, b:0  },  // H=90°
+  {name:'Green',        r:0,   g:255, b:0  },  // H=120°
+  {name:'Spring Green', r:0,   g:255, b:128},  // H=150°
+  {name:'Cyan',         r:0,   g:255, b:255},  // H=180°
+  {name:'Azure',        r:0,   g:128, b:255},  // H=210°
+  {name:'Blue',         r:0,   g:0,   b:255},  // H=240°
+  {name:'Indigo',       r:64,  g:0,   b:255},  // H=255°
+  {name:'Violet',       r:128, g:0,   b:255},  // H=270°
+  {name:'Magenta',      r:255, g:0,   b:255},  // H=300°
+  {name:'Pink',         r:255, g:0,   b:128},  // H=330°
+  {name:'Rose',         r:255, g:0,   b:64 },  // H=345°
+  {name:'Warm White',   r:255, g:198, b:128},  // ~2700 K
+  {name:'Soft White',   r:255, g:224, b:160},  // ~3000 K
+  {name:'Cool White',   r:208, g:232, b:255},  // ~6000 K
+  {name:'Daylight',     r:240, g:240, b:255},  // ~6500 K
   {name:'Coral',        r:255, g:88,  b:64 },
   {name:'Lavender',     r:150, g:123, b:182},
 ];

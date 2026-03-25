@@ -106,19 +106,6 @@ static bool s_encoder_ok = false;
 
 static void clear_wifi_credentials();  // defined before app_main
 
-// ── is_matter_commissioned_quick ──────────────────────────────────────────────
-// Returns true if CHIP has fabric data in NVS, WITHOUT starting the Matter
-// stack.  chip::Server::GetInstance().GetFabricTable().FabricCount() only works
-// after esp_matter::start(), so we can't use it at the pre-start boot check.
-// CHIP_KVS is empty on a fresh/factory-reset device and gains entries after the
-// first successful commissioning — it's a reliable proxy for FabricCount > 0.
-static bool is_matter_commissioned_quick()
-{
-    nvs_iterator_t it  = nullptr;
-    esp_err_t      err = nvs_entry_find("nvs", "CHIP_KVS", NVS_TYPE_ANY, &it);
-    if (it) nvs_release_iterator(it);
-    return (err == ESP_OK);   // ESP_OK → at least one entry found
-}
 
 // ── dismiss_fn implementation ─────────────────────────────────────────────────
 // Called by Menu::wait_for_dismiss() at 50ms intervals.
@@ -540,8 +527,10 @@ static void clear_wifi_credentials()
 {
     NetCfg empty = {};
     ConfigStore::load(empty);
-    empty.ssid[0]     = '\0';
-    empty.password[0] = '\0';
+    empty.ssid[0]          = '\0';
+    empty.password[0]      = '\0';
+    empty.wifi_only         = false;
+    empty.matter_commissioned = false;
     ConfigStore::save(empty);
 
     wifi_config_t wcfg = {};
@@ -738,7 +727,7 @@ extern "C" void app_main()
     // Cleared automatically when WiFi credentials are erased (A+B factory reset).
     const bool wifi_only = netCfg.wifi_only;
 
-    const bool matter_commissioned = wifi_only ? false : is_matter_commissioned_quick();
+    const bool matter_commissioned = wifi_only ? false : netCfg.matter_commissioned;
     s_net.set_matter_commissioned(matter_commissioned);
 
     bool did_first_time_setup = false;
@@ -795,8 +784,13 @@ extern "C" void app_main()
                 }
                 bool confirmed = s_menu.show_matter_pairing_standalone(
                     [&]() { return s_matter.is_commissioned(); });
-                if (confirmed)
+                if (confirmed) {
+                    // Persist our own commissioning flag so the next boot
+                    // skips first-time setup without relying on CHIP_KVS state.
+                    netCfg.matter_commissioned = true;
+                    ConfigStore::save(netCfg);
                     setup_done = true;
+                }
                 // else: loop back to first_time_setup choice screen
             }
         }

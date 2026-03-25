@@ -302,6 +302,9 @@ void MatterBridge::apply(int idx)
             break;
     }
 
+    static const char* mode_str[] = { "HS", "XY", "CT" };
+    ESP_LOGI(TAG, "ep%d [%s] → RGB(%u,%u,%u) bri=%u",
+             idx, mode_str[ep_[idx].color_mode & 0x03], r, g, b, ep_[idx].level);
     leds_.set_effect(tgt, LedManager::Effect::STATIC);
     leds_.set_color(tgt, r, g, b);
     leds_.set_brightness(tgt, ep_[idx].level);
