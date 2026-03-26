@@ -165,6 +165,7 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
     if      (strcmp(cmd_name, "led-color")  == 0) handled_inline = handle_color(LedManager::Target::BOTH);
     else if (strcmp(cmd_name, "led1-color") == 0) handled_inline = handle_color(LedManager::Target::STRIP_1);
     else if (strcmp(cmd_name, "led2-color") == 0) handled_inline = handle_color(LedManager::Target::STRIP_2);
+    else if (strcmp(cmd_name, "led-bright")  == 0) handled_inline = handle_bright(LedManager::Target::BOTH);
     else if (strcmp(cmd_name, "led1-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_1);
     else if (strcmp(cmd_name, "led2-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_2);
 

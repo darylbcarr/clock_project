@@ -401,6 +401,19 @@ input[type=range]::-webkit-slider-thumb {
 
 <!-- ════════════════════════════════════ LIGHTS ══════════════════════════ -->
 <div id="sec-lights" class="section">
+
+  <!-- Strip target selector -->
+  <div class="card" style="padding:10px 14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-size:12px;font-weight:600;color:var(--dim);">APPLY TO</span>
+      <div class="dir-toggle">
+        <button class="dir-opt active" id="tgt-ring" onclick="setLightTarget(1)">Ring</button>
+        <button class="dir-opt"        id="tgt-base" onclick="setLightTarget(2)">Base</button>
+        <button class="dir-opt"        id="tgt-both" onclick="setLightTarget(0)">Both</button>
+      </div>
+    </div>
+  </div>
+
   <div class="card" id="strip1-card">
     <div class="strip-header">
       <span class="strip-name">Ring</span>
@@ -929,6 +942,15 @@ function doSetTime() {
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────
+// lightTarget: 1=Ring, 2=Base, 0=Both
+let lightTarget = 1;
+function setLightTarget(t) {
+  lightTarget = t;
+  document.getElementById('tgt-ring').classList.toggle('active', t === 1);
+  document.getElementById('tgt-base').classList.toggle('active', t === 2);
+  document.getElementById('tgt-both').classList.toggle('active', t === 0);
+}
+
 function buildColorGrid(n) {
   const grid = document.getElementById('color' + n + '-grid');
   grid.innerHTML = '';
@@ -944,23 +966,47 @@ function buildColorGrid(n) {
 }
 
 function doColor(n, r, g, b, el) {
-  document.querySelectorAll('#color' + n + '-grid .color-swatch').forEach(s => s.classList.remove('active'));
-  if (el) el.classList.add('active');
-  post('led' + n + '-color', {r, g, b});
+  const tgt = lightTarget === 0 ? 0 : n;  // 0 = both
+  if (tgt === 0) {
+    // Highlight matching swatch in both grids
+    [1, 2].forEach(m => {
+      document.querySelectorAll('#color' + m + '-grid .color-swatch').forEach(sw => {
+        const c = COLORS[parseInt(sw.dataset.idx)];
+        sw.classList.toggle('active', !!(c && c.r === r && c.g === g && c.b === b));
+      });
+    });
+    post('led-color', {r, g, b});
+  } else {
+    document.querySelectorAll('#color' + tgt + '-grid .color-swatch').forEach(s => s.classList.remove('active'));
+    if (el) el.classList.add('active');
+    post('led' + tgt + '-color', {r, g, b});
+  }
 }
 
 function doFx(n, fx) {
-  post('led' + n + '-' + fx).then(() => {
-    // Highlight is updated by next WS push
-  });
+  const tgt = lightTarget === 0 ? '' : n;  // '' prefix = both
+  post('led' + tgt + '-' + fx);
 }
 
 function doBright(n, val) {
   val = parseInt(val);
-  document.getElementById('bright' + n + '-pct').textContent = Math.round(val/255*100) + '%';
-  clearTimeout(n === 1 ? brightTimer1 : brightTimer2);
-  const t = setTimeout(() => post('led' + n + '-bright', {brightness: val}), 80);
-  if (n === 1) brightTimer1 = t; else brightTimer2 = t;
+  const pct = Math.round(val / 255 * 100) + '%';
+  const tgt = lightTarget === 0 ? 0 : n;
+  if (tgt === 0) {
+    // Mirror value to both sliders/labels immediately
+    [1, 2].forEach(m => {
+      if (!sliderActive[m - 1]) document.getElementById('bright' + m).value = val;
+      document.getElementById('bright' + m + '-pct').textContent = pct;
+    });
+    clearTimeout(brightTimer1); clearTimeout(brightTimer2);
+    const t = setTimeout(() => post('led-bright', {brightness: val}), 80);
+    brightTimer1 = brightTimer2 = t;
+  } else {
+    document.getElementById('bright' + tgt + '-pct').textContent = pct;
+    clearTimeout(tgt === 1 ? brightTimer1 : brightTimer2);
+    const t = setTimeout(() => post('led' + tgt + '-bright', {brightness: val}), 80);
+    if (tgt === 1) brightTimer1 = t; else brightTimer2 = t;
+  }
 }
 
 function applyStrip(n, s) {
