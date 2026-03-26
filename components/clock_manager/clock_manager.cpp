@@ -186,20 +186,45 @@ void ClockManager::tick()
 
     // ── C: fast correction accumulating — slot found, :00 not yet reached ─────
     if (correction_pending_ && !at_top_of_hour) {
-        // One more real minute has passed; advance motor and grow the correction.
-        motor_.microstep_n(STEPS_PER_CLOCK_MINUTE, StepDirection::FORWARD);
-        correction_accum_ += STEPS_PER_CLOCK_MINUTE;
-        displayed_minute_ = (displayed_minute_ + 1) % 60;
-        if (displayed_minute_ == 0 && displayed_hour_ >= 0)
-            displayed_hour_ = (displayed_hour_ + 1) % 12;
-        ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
-        ESP_LOGD(TAG, "Fast correction accumulating: accum=%d  disp=%02d:%02d",
-                 correction_accum_, displayed_hour_, displayed_minute_);
+        // Safety: if the accumulation has grown beyond the max correction window
+        // the original slot detection was almost certainly a false positive.
+        // Abandon it rather than executing a destructive large backward move.
+        if (correction_accum_ > MAX_AUTO_CORRECT_MINUTES * STEPS_PER_CLOCK_MINUTE) {
+            ESP_LOGW(TAG, "Fast correction abandoned: accum=%d exceeded max window — "
+                          "likely false sensor trigger", correction_accum_);
+            correction_pending_ = false;
+            correction_accum_   = 0;
+            // Fall through to path D for a normal advance this minute.
+        } else {
+            // One more real minute has passed; advance motor and grow the correction.
+            motor_.microstep_n(STEPS_PER_CLOCK_MINUTE, StepDirection::FORWARD);
+            correction_accum_ += STEPS_PER_CLOCK_MINUTE;
+            displayed_minute_ = (displayed_minute_ + 1) % 60;
+            if (displayed_minute_ == 0 && displayed_hour_ >= 0)
+                displayed_hour_ = (displayed_hour_ + 1) % 12;
+            ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
+            ESP_LOGD(TAG, "Fast correction accumulating: accum=%d  disp=%02d:%02d",
+                     correction_accum_, displayed_hour_, displayed_minute_);
+            xSemaphoreGive(mutex_);
+            return;
+        }
+    }
+
+    // ── D: normal scan — advance one minute while watching for the slot ────────
+    // Only run scan_full() when within MAX_AUTO_CORRECT_MINUTES of the top of the
+    // hour, or when past_hour_ is active (slow-case catch-up after missing :00).
+    // Scanning every minute risks false positives far from :00 which cause large
+    // backward corrections when path B fires at the next :00.
+    bool near_top = (t.tm_min >= (60 - MAX_AUTO_CORRECT_MINUTES))
+                    || at_top_of_hour
+                    || past_hour_;
+
+    if (!near_top) {
+        advance_one_minute();
         xSemaphoreGive(mutex_);
         return;
     }
 
-    // ── D: normal scan — advance one minute while watching for the slot ────────
     int  trigger_step = 0;
     bool found        = scan_full(trigger_step);
 

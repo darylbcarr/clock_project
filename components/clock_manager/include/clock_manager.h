@@ -23,6 +23,10 @@ static constexpr const char* NTP_SERVER_2 = "time.google.com";
 /// Default timezone string (POSIX TZ).  Updated by networking component.
 static constexpr const char* DEFAULT_TZ = "UTC0";
 
+/// Maximum minutes of drift the sensor correction will auto-correct.
+/// scan_full() only runs within this many minutes of the top of the hour.
+static constexpr int MAX_AUTO_CORRECT_MINUTES = 5;
+
 // ── Calibration phase ────────────────────────────────────────────────────────
 enum class CalPhase {
     IDLE,            ///< Not calibrating
