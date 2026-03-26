@@ -80,4 +80,3 @@ Desktop.ini
 *.sln.docstates # Visual Studio
 
 # ignore documentation output directories
-docs/
