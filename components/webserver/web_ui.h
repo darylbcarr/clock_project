@@ -676,6 +676,32 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
+  <!-- WiFi Credentials -->
+  <div class="card">
+    <div class="card-title">WiFi Credentials</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Update the WiFi network name and password. The device will restart to connect
+      with the new credentials. Matter commissioning is preserved.
+    </p>
+    <div class="cfg-row">
+      <label style="min-width:72px;font-size:12px;">SSID</label>
+      <input type="text" id="cfg-wifi-ssid" placeholder="Network name" autocomplete="off"
+             spellcheck="false"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:13px;">
+    </div>
+    <div class="cfg-row" style="margin-top:8px;">
+      <label style="min-width:72px;font-size:12px;">Password</label>
+      <input type="password" id="cfg-wifi-pass" placeholder="Password" autocomplete="new-password"
+             style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);
+                    background:var(--surf2);color:var(--text);font-size:13px;">
+    </div>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center;">
+      <button class="btn btn-secondary btn-sm" onclick="saveWifiCreds()">Save &amp; Restart</button>
+      <span style="font-size:11px;color:var(--muted);">Connection will be lost during restart</span>
+    </div>
+  </div>
+
   <!-- Firmware Update -->
   <div class="card">
     <div class="card-title">Firmware Update</div>
@@ -1067,6 +1093,18 @@ function saveTz() {
   const tz = document.getElementById('cfg-tz').value.trim();
   postCfg({tz_override: tz}).then(() => toast('Timezone saved — restart to apply'));
 }
+function saveWifiCreds() {
+  const ssid = (document.getElementById('cfg-wifi-ssid').value || '').trim();
+  const pass = document.getElementById('cfg-wifi-pass').value || '';
+  if (!ssid) { toast('SSID is required', 'err'); return; }
+  if (!confirm('Update WiFi to "' + ssid + '" and restart?')) return;
+  postCfg({wifi_ssid: ssid, wifi_password: pass}).then(() => {
+    toast('Credentials saved \u2014 device is restarting\u2026');
+    document.getElementById('cfg-wifi-ssid').value = '';
+    document.getElementById('cfg-wifi-pass').value = '';
+  });
+}
+
 function saveMdnsHostname() {
   const name = document.getElementById('cfg-mdns').value.trim();
   if (!name) return;

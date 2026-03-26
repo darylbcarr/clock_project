@@ -169,6 +169,24 @@ public:
      */
     bool show_matter_pairing_standalone(std::function<bool()> commissioned_fn = nullptr);
 
+    /**
+     * @brief Blocking character-by-character text entry using the encoder + buttons.
+     *        Returns the entered string when the user confirms (both GPIO buttons).
+     *        Returns empty string if cancelled or input_poll_fn_ is not set.
+     *
+     * Controls:
+     *   Encoder rotate  → scroll through character palette
+     *   Encoder press   → add selected character
+     *   Encoder hold    → delete last character (backspace)
+     *   Button A        → jump to next character group (a-z / A-Z / 0-9 / !@#)
+     *   Button B        → add space
+     *   Both A+B        → confirm and return
+     *
+     * Both fields are entered on one screen.
+     * Returns true = confirmed (ssid non-empty), false = cancelled.
+     */
+    bool show_wifi_credentials(std::string &ssid, std::string &pw);
+
     // ── Display blanking ──────────────────────────────────────────────────────
     /**
      * @brief Must be called from the encoder poll loop on any encoder event.
@@ -221,24 +239,6 @@ private:
     void show_net_status(Networking& net);
     void show_time_screen(ClockManager& cm);
     void show_ota_screen();   // firmware update check + optional install
-
-    /**
-     * @brief Blocking character-by-character text entry using the encoder + buttons.
-     *        Returns the entered string when the user confirms (both GPIO buttons).
-     *        Returns empty string if cancelled or input_poll_fn_ is not set.
-     *
-     * Controls:
-     *   Encoder rotate  → scroll through character palette
-     *   Encoder press   → add selected character
-     *   Encoder hold    → delete last character (backspace)
-     *   Button A        → jump to next character group (a-z / A-Z / 0-9 / !@#)
-     *   Button B        → add space
-     *   Both A+B        → confirm and return
-     *
-     * Both fields are entered on one screen.
-     * Returns true = confirmed (ssid non-empty), false = cancelled.
-     */
-    bool show_wifi_credentials(std::string &ssid, std::string &pw);
 
     // Blocks until dismiss_fn_ fires or 30s timeout
     void wait_for_dismiss();

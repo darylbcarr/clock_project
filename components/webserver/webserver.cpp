@@ -6,6 +6,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_wifi.h"
+#include "esp_system.h"
 #include "cJSON.h"
 #include <cstring>
 #include <cstdlib>
@@ -13,6 +15,8 @@
 static const char* TAG = "webserver";
 
 WebServer* WebServer::s_instance_ = nullptr;
+
+static void restart_cb(void*) { esp_restart(); }
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
@@ -275,6 +279,45 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
         ConfigStore::load(nc);
         snprintf(nc.mdns_hostname, sizeof(nc.mdns_hostname), "%s", j->valuestring);
         ConfigStore::save(nc);
+    }
+
+    // ── WiFi credentials update (saves to NVS + WiFi driver; restarts) ────────
+    if ((j = cJSON_GetObjectItem(body, "wifi_ssid")) && cJSON_IsString(j)
+        && strlen(j->valuestring) > 0) {
+        const char* new_ssid = j->valuestring;
+        const char* new_pass = "";
+        cJSON* jp = cJSON_GetObjectItem(body, "wifi_password");
+        if (jp && cJSON_IsString(jp)) new_pass = jp->valuestring;
+
+        // Save to our app NVS
+        NetCfg nc = {};
+        ConfigStore::load(nc);
+        snprintf(nc.ssid,     sizeof(nc.ssid),     "%s", new_ssid);
+        snprintf(nc.password, sizeof(nc.password), "%s", new_pass);
+        ConfigStore::save(nc);
+
+        // Update WiFi driver NVS — CHIP's ESPWiFiDriver::Init() reads this via
+        // esp_wifi_get_config() on next boot, covering both WiFi-only and Matter.
+        wifi_config_t wcfg = {};
+        strncpy((char*)wcfg.sta.ssid,     new_ssid, sizeof(wcfg.sta.ssid)     - 1);
+        strncpy((char*)wcfg.sta.password, new_pass, sizeof(wcfg.sta.password) - 1);
+        wcfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+
+        // Send response before restarting
+        cJSON_Delete(body);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+
+        // Restart 1.5 s later (after response is sent and client receives it)
+        esp_timer_handle_t t;
+        esp_timer_create_args_t ta = {};
+        ta.callback = restart_cb;
+        ta.name     = "wifi_restart";
+        esp_timer_create(&ta, &t);
+        esp_timer_start_once(t, 1500000);   // 1.5 s
+        return ESP_OK;
     }
 
     cJSON_Delete(body);

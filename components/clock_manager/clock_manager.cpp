@@ -140,6 +140,10 @@ void ClockManager::tick()
     // the hand and the motor must not move autonomously.
     if (cal_mode_) return;
 
+    // Motor must not run until SNTP has provided a valid time.
+    // After power-cycle without WiFi, the system clock is at epoch (1970).
+    if (!time_valid_) return;
+
     xSemaphoreTake(mutex_, portMAX_DELAY);
     // Re-check after acquiring mutex (in case cal started while we waited).
     if (cal_mode_) {

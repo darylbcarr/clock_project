@@ -47,6 +47,7 @@
  */
 
 #include <cstdio>
+#include <string>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
@@ -198,69 +199,6 @@ static bool dismiss_fn()
     return btn;
 }
 
-// ── Boot-time WiFi failure prompt ─────────────────────────────────────────────
-// Shown when stored credentials fail to connect within ~15 s on a returning
-// device.  Returns true if the user wants to reconfigure (holds A+B for 2 s),
-// or false to keep trying (single button press or 30 s timeout).
-static bool show_wifi_failed_prompt(const char* ssid)
-{
-    s_display.clear();
-    s_display.print(0, "WiFi not found!");
-    s_display.print(1, ssid);          // auto-truncated to 16 chars
-    s_display.print(2, "Reconfigure:");
-    s_display.print(3, " A+B 2s/enc 5s");
-    s_display.print(5, "Keep trying:");
-    s_display.print(6, " btn/enc/30s");
-
-    constexpr int      TIMEOUT_TICKS    = 30000 / 50;  // 30 s at 50 ms polls
-    constexpr uint32_t RECFG_HOLD_AB_MS = 2000;
-    constexpr uint32_t RECFG_HOLD_ENC_MS = 5000;
-
-    uint32_t both_hold_ms = 0;
-    uint32_t enc_hold_ms  = 0;
-    bool     enc_last     = false;
-
-    for (int tick = 0; tick < TIMEOUT_TICKS; tick++) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-
-        bool btnA = (gpio_get_level(BUTTON_A) == 0);
-        bool btnB = (gpio_get_level(BUTTON_B) == 0);
-        bool both = btnA && btnB;
-
-        bool enc_btn = false;
-        if (s_encoder_ok) {
-            SemaphoreHandle_t mtx = s_display.getBusMutex();
-            xSemaphoreTake(mtx, portMAX_DELAY);
-            enc_btn = s_encoder.button_pressed();
-            xSemaphoreGive(mtx);
-        }
-
-        // A+B chord → reconfigure at 2 s
-        if (both) {
-            both_hold_ms += 50;
-            if (both_hold_ms >= RECFG_HOLD_AB_MS)
-                return true;
-        } else {
-            both_hold_ms = 0;
-            if (btnA || btnB)
-                return false;  // single hardware button → keep trying
-        }
-
-        // Encoder button: hold ≥ 5 s → reconfigure, release before → keep trying
-        if (enc_btn) {
-            enc_hold_ms += 50;
-            if (enc_hold_ms >= RECFG_HOLD_ENC_MS)
-                return true;
-        } else {
-            if (enc_last && enc_hold_ms < RECFG_HOLD_ENC_MS)
-                return false;  // released before 5 s → keep trying
-            enc_hold_ms = 0;
-        }
-        enc_last = enc_btn;
-    }
-
-    return false;  // 30 s timeout → keep trying
-}
 
 // ── Encoder poll task ─────────────────────────────────────────────────────────
 // Runs at 50 Hz. Handles rotation, short press (select), long press (back).
@@ -277,7 +215,7 @@ static void encoder_task(void* /*arg*/)
     bool     btnA_last        = false;
     bool     btnB_last        = false;
     uint32_t btnA_press_tick  = 0;
-    uint32_t btnB_press_tick  = 0;
+    [[maybe_unused]] uint32_t btnB_press_tick  = 0;
     bool     btnA_long_fired  = false;
     bool     btnB_long_fired  = false;
     bool     both_last        = false;
@@ -537,6 +475,44 @@ static void clear_wifi_credentials()
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);   // clears driver NVS copy
 
     clear_matter_commissioning_data();
+}
+
+// ── update_wifi_credentials_from_menu ─────────────────────────────────────────
+// Called from the WiFi restart loop when the user presses a button.
+// Presents the credential-entry screen (same as first-time WiFi setup).
+// On confirm: saves to our NVS and updates the WiFi driver NVS so CHIP also
+//   picks up the new credentials via esp_wifi_get_config() on next boot.
+// Returns false if the user cancelled (restart loop should continue).
+// On save: calls esp_restart() directly — never returns true.
+static bool update_wifi_credentials_from_menu()
+{
+    std::string new_ssid, new_pw;
+    if (!s_menu.show_wifi_credentials(new_ssid, new_pw) || new_ssid.empty()) {
+        return false;   // cancelled
+    }
+
+    // Save to our app NVS (used by Networking on WiFi-only path)
+    NetCfg nc = {};
+    ConfigStore::load(nc);
+    snprintf(nc.ssid,     sizeof(nc.ssid),     "%s", new_ssid.c_str());
+    snprintf(nc.password, sizeof(nc.password), "%s", new_pw.c_str());
+    ConfigStore::save(nc);
+
+    // Update WiFi driver NVS — CHIP's ESPWiFiDriver::Init() reads this on boot
+    // via esp_wifi_get_config(), so both WiFi-only and Matter paths use the
+    // new credentials without needing to touch CHIP_KVS fabric data.
+    wifi_config_t wcfg = {};
+    strncpy((char*)wcfg.sta.ssid,     new_ssid.c_str(), sizeof(wcfg.sta.ssid)     - 1);
+    strncpy((char*)wcfg.sta.password, new_pw.c_str(),   sizeof(wcfg.sta.password) - 1);
+    wcfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    esp_wifi_set_config(WIFI_IF_STA, &wcfg);
+
+    s_display.clear();
+    s_display.print(0, "WiFi updated.");
+    s_display.print(2, "Restarting...");
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+    return true;  // unreachable
 }
 
 // ── app_main ──────────────────────────────────────────────────────────────────
@@ -860,37 +836,127 @@ extern "C" void app_main()
         }
     }
 
-    // ── 5b. For returning devices — verify WiFi connects within 15 s ─────────
-    // Only runs when credentials were already stored in NVS (not first-time
-    // setup, not Matter-only).  If connection fails, show a recovery prompt:
-    //   Hold A+B 2 s → clear NVS credentials and restart into first-time setup
-    //   Any single button or 30 s timeout → keep trying (continue to main menu)
-    if (!did_first_time_setup && wifi_ssid[0] != '\0') {
-        s_display.clear();
-        s_display.print(0, "Connecting...");
-        s_display.print(2, wifi_ssid);
-
-        bool connected = false;
-        for (int i = 0; i < 30 && !connected; i++) {   // up to 15 s
-            vTaskDelay(pdMS_TO_TICKS(500));
-            connected = s_net.is_connected();
-        }
-
-        if (!wifi_only && connected && !s_matter.is_commissioned()) {
-            // WiFi is up but device has no Matter fabric — stop BLE advertising
-            // that Matter started in section 4c.  Without this, slow BLE adverts
-            // (500 ms interval) compete with WiFi for the radio and cause
-            // persistent WebSocket drops.  open_commissioning_window() re-enables.
-            s_matter.disable_ble_advertising();
-        }
-
-        if (!connected) {
-            bool reconfigure = show_wifi_failed_prompt(wifi_ssid);
-            if (reconfigure) {
-                clear_wifi_credentials();
-                esp_restart();
+    // ── 5b. For returning devices — wait for WiFi or restart loop ────────────
+    // Runs when credentials exist (WiFi-only) or Matter is commissioned.
+    // Initial 15 s fast poll, then a 10-minute restart loop on failure:
+    //   A+B held 2 s → full factory reset (clears credentials + Matter fabric)
+    //   Single button / encoder → re-enter WiFi credentials (preserves fabric)
+    //   10-minute timeout → esp_restart() to retry on next boot
+    {
+        bool has_network_config = (wifi_ssid[0] != '\0') || matter_commissioned;
+        if (!did_first_time_setup && has_network_config) {
+            // Determine SSID to display (WiFi-only has it; Matter reads driver NVS)
+            char display_ssid[33] = {};
+            if (wifi_ssid[0] != '\0') {
+                strncpy(display_ssid, wifi_ssid, sizeof(display_ssid) - 1);
+            } else {
+                wifi_config_t wc = {};
+                if (esp_wifi_get_config(WIFI_IF_STA, &wc) == ESP_OK && wc.sta.ssid[0] != 0)
+                    strncpy(display_ssid, (char*)wc.sta.ssid, sizeof(display_ssid) - 1);
+                else
+                    strncpy(display_ssid, "Matter network", sizeof(display_ssid) - 1);
             }
-            // else: user chose to keep trying — fall through to main menu
+
+            s_display.clear();
+            s_display.print(0, "Connecting...");
+            s_display.print(2, display_ssid);
+
+            bool connected = false;
+            for (int i = 0; i < 30 && !connected; i++) {   // up to 15 s
+                vTaskDelay(pdMS_TO_TICKS(500));
+                connected = s_net.is_connected();
+            }
+
+            if (!wifi_only && connected && !s_matter.is_commissioned()) {
+                // WiFi is up but no fabric — stop BLE advertising to avoid
+                // radio contention with WebSocket traffic.
+                s_matter.disable_ble_advertising();
+            }
+
+            if (!connected) {
+                // ── Restart loop: poll up to 10 minutes, then restart ─────────────
+                static constexpr int RESTART_TIMEOUT_S  = 600;
+                static constexpr int POLL_INTERVAL_MS   = 50;
+                static constexpr int DISPLAY_REFRESH_MS = 5000;
+
+                int  elapsed_ms      = 0;
+                int  next_refresh_ms = 0;   // 0 = render immediately
+                uint32_t ab_hold_ms  = 0;
+                bool btnA_prev = false, btnB_prev = false, enc_prev = false;
+
+                while (elapsed_ms < RESTART_TIMEOUT_S * 1000) {
+
+                    if (next_refresh_ms <= 0) {
+                        int rem_s = (RESTART_TIMEOUT_S * 1000 - elapsed_ms) / 1000;
+                        char line[20];
+                        s_display.clear();
+                        s_display.print(0, "WiFi not found");
+                        snprintf(line, sizeof(line), "%.15s", display_ssid);
+                        s_display.print(1, line);
+                        s_display.print(3, "A+B: Full reset");
+                        s_display.print(4, "Btn: New WiFi");
+                        snprintf(line, sizeof(line), "Restart: %dm%02ds",
+                                 rem_s / 60, rem_s % 60);
+                        s_display.print(6, line);
+                        next_refresh_ms = DISPLAY_REFRESH_MS;
+                    }
+
+                    vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+                    elapsed_ms      += POLL_INTERVAL_MS;
+                    next_refresh_ms -= POLL_INTERVAL_MS;
+
+                    if (s_net.is_connected()) { connected = true; break; }
+
+                    // ── Button polling ────────────────────────────────────────────
+                    bool btnA = (gpio_get_level(BUTTON_A) == 0);
+                    bool btnB = (gpio_get_level(BUTTON_B) == 0);
+                    bool both = btnA && btnB;
+
+                    if (both) {
+                        ab_hold_ms += POLL_INTERVAL_MS;
+                        if (ab_hold_ms >= 2000) {
+                            clear_wifi_credentials();
+                            esp_restart();
+                        }
+                    } else {
+                        ab_hold_ms = 0;
+                        // Falling edge on A or B → re-enter WiFi credentials
+                        if ((btnA && !btnA_prev) || (btnB && !btnB_prev)) {
+                            if (!update_wifi_credentials_from_menu())
+                                next_refresh_ms = 0;  // cancelled: force re-render
+                        }
+                        btnA_prev = btnA;
+                        btnB_prev = btnB;
+                    }
+
+                    // Encoder button falling edge → same as single button
+                    if (s_encoder_ok) {
+                        SemaphoreHandle_t mtx = s_display.getBusMutex();
+                        if (xSemaphoreTake(mtx, pdMS_TO_TICKS(10)) == pdTRUE) {
+                            bool enc = s_encoder.button_pressed();
+                            xSemaphoreGive(mtx);
+                            if (enc && !enc_prev) {
+                                if (!update_wifi_credentials_from_menu())
+                                    next_refresh_ms = 0;
+                            }
+                            enc_prev = enc;
+                        }
+                    }
+                }
+
+                if (!connected) {
+                    // 10-minute timeout — restart and try again
+                    s_display.clear();
+                    s_display.print(0, "WiFi timeout.");
+                    s_display.print(2, "Restarting...");
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_restart();
+                }
+            }
+
+            if (!wifi_only && connected && !s_matter.is_commissioned()) {
+                s_matter.disable_ble_advertising();
+            }
         }
     }
 
