@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hollow Clock — Help &amp; User Guide</title>
+<style>
+  /* ── Reset & Base ──────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #22263a;
+    --border:    #2e3352;
+    --gold:      #e8b84b;
+    --gold-dim:  #b8893a;
+    --gold-glow: rgba(232,184,75,0.12);
+    --text:      #e8eaf2;
+    --dim:       #8a90aa;
+    --green:     #3dd68c;
+    --blue:      #60a5fa;
+    --orange:    #fb923c;
+    --red:       #f87171;
+    --sidebar-w: 260px;
+    --hdr-h:     60px;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  /* ── Header ────────────────────────────────────────────────────── */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    height: var(--hdr-h);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 24px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+  }
+  .hdr-icon {
+    width: 34px; height: 34px;
+    background: var(--gold);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 12px rgba(232,184,75,0.4);
+  }
+  .hdr-icon svg { width:20px; height:20px; }
+  header h1 { font-size: 17px; font-weight: 700; color: var(--text); }
+  header h1 span { color: var(--gold); }
+  .hdr-badge {
+    margin-left: auto;
+    font-size: 11px; font-weight: 600; letter-spacing: .5px;
+    color: var(--dim);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 20px;
+  }
+
+  /* ── Layout ────────────────────────────────────────────────────── */
+  .layout {
+    display: flex;
+    margin-top: var(--hdr-h);
+    min-height: calc(100vh - var(--hdr-h));
+  }
+
+  /* ── Sidebar ───────────────────────────────────────────────────── */
+  aside {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    position: sticky; top: var(--hdr-h);
+    height: calc(100vh - var(--hdr-h));
+    overflow-y: auto; overflow-x: hidden;
+    padding: 20px 0 40px;
+  }
+  aside::-webkit-scrollbar { width: 4px; }
+  aside::-webkit-scrollbar-track { background: transparent; }
+  aside::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .nav-group { margin-bottom: 6px; }
+  .nav-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--dim);
+    padding: 6px 20px 4px;
+  }
+  .nav-link {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 20px;
+    color: var(--dim); text-decoration: none;
+    font-size: 13.5px; font-weight: 500;
+    border-left: 2px solid transparent;
+    transition: all .15s;
+  }
+  .nav-link:hover { color: var(--text); background: var(--gold-glow); }
+  .nav-link.active {
+    color: var(--gold);
+    border-left-color: var(--gold);
+    background: var(--gold-glow);
+  }
+  .nav-icon { font-size: 14px; width: 18px; text-align: center; }
+
+  /* ── Main content ──────────────────────────────────────────────── */
+  main {
+    flex: 1; min-width: 0;
+    padding: 40px 48px 80px;
+    max-width: 900px;
+  }
+
+  /* ── Section headings ──────────────────────────────────────────── */
+  .section { margin-bottom: 56px; }
+  .section-header {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: var(--gold-glow);
+    border: 1px solid rgba(232,184,75,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  .section-header h2 { font-size: 22px; font-weight: 700; }
+  .section-header p { font-size: 13px; color: var(--dim); margin-top: 2px; }
+
+  h3 {
+    font-size: 16px; font-weight: 700;
+    margin: 28px 0 12px;
+    color: var(--gold);
+  }
+  h4 {
+    font-size: 14px; font-weight: 600;
+    margin: 20px 0 8px;
+    color: var(--text);
+  }
+  p { margin-bottom: 12px; color: var(--text); }
+  p:last-child { margin-bottom: 0; }
+
+  /* ── Cards ─────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--dim);
+    margin-bottom: 12px;
+  }
+
+  /* ── Step list ─────────────────────────────────────────────────── */
+  .steps { list-style: none; }
+  .steps li {
+    display: flex; gap: 14px; align-items: flex-start;
+    margin-bottom: 14px;
+  }
+  .step-num {
+    flex: 0 0 26px;
+    width: 26px; height: 26px;
+    max-width: 26px;
+    aspect-ratio: 1 / 1;
+    background: var(--gold);
+    color: #0f1117;
+    font-size: 12px; font-weight: 800;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 1px;
+  }
+  .steps li > div { flex: 1; }
+
+  /* ── Tables ────────────────────────────────────────────────────── */
+  .tbl-wrap { overflow-x: auto; margin-bottom: 16px; }
+  table {
+    width: 100%; border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  thead tr { background: var(--surface2); }
+  th {
+    text-align: left; padding: 9px 14px;
+    font-size: 11px; font-weight: 700; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--dim);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  td strong { color: var(--text); }
+
+  /* ── Callouts ──────────────────────────────────────────────────── */
+  .callout {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 13px 16px;
+    border-radius: 8px;
+    margin: 14px 0;
+    font-size: 13.5px; line-height: 1.55;
+  }
+  .callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .callout.tip   { background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.25); }
+  .callout.warn  { background: rgba(251,146,60,0.08); border: 1px solid rgba(251,146,60,0.25); color: var(--orange); }
+  .callout.info  { background: rgba(232,184,75,0.07); border: 1px solid rgba(232,184,75,0.2);  color: #d4a83a; }
+  .callout.good  { background: rgba(61,214,140,0.07); border: 1px solid rgba(61,214,140,0.25); color: var(--green); }
+  .callout p { margin: 0; }
+  .callout.tip  p { color: var(--blue); }
+  .callout.good p { color: var(--green); }
+
+  /* ── Inline code / kbd ─────────────────────────────────────────── */
+  code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12.5px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: #c9d1e8;
+  }
+  pre {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12.5px;
+    overflow-x: auto;
+    margin: 12px 0;
+    color: #b8c0d8;
+    line-height: 1.7;
+  }
+  kbd {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 12px; font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    font-family: inherit;
+  }
+
+  /* ── Effect / colour grid ──────────────────────────────────────── */
+  .effect-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px; margin: 12px 0;
+  }
+  .effect-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .effect-name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .effect-desc { font-size: 12px; color: var(--dim); margin-top: 3px; }
+
+  /* ── Tab section pills ─────────────────────────────────────────── */
+  .tab-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 10px 3px 8px;
+    font-size: 13px; font-weight: 600;
+    color: var(--text);
+    vertical-align: middle;
+  }
+  .tab-dot { width:7px; height:7px; border-radius:50%; background:var(--gold); }
+
+  /* ── Two-col layout for some cards ────────────────────────────── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* ── Path choice cards ─────────────────────────────────────────── */
+  .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .choice-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px;
+    position: relative; overflow: hidden;
+  }
+  .choice-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0;
+    height: 3px; background: var(--gold);
+  }
+  .choice-card.blue::before { background: var(--blue); }
+  .choice-num {
+    font-size: 11px; font-weight: 700; letter-spacing: .8px;
+    text-transform: uppercase; color: var(--gold);
+    margin-bottom: 6px;
+  }
+  .choice-card.blue .choice-num { color: var(--blue); }
+  .choice-card h4 { margin: 0 0 8px; font-size: 15px; }
+  .choice-card p  { font-size: 13px; color: var(--dim); margin: 0; }
+
+  /* ── Input reference ───────────────────────────────────────────── */
+  .input-ref {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden; margin: 12px 0;
+  }
+  .input-row {
+    display: flex; align-items: center;
+    padding: 8px 14px; border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .input-row:last-child { border-bottom: none; }
+  .input-key { min-width: 180px; }
+  .input-action { color: var(--dim); font-size: 13.5px; }
+
+  /* ── Divider ───────────────────────────────────────────────────── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+  /* ── Badge ─────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    padding: 2px 7px; border-radius: 4px;
+    text-transform: uppercase;
+  }
+  .badge-green  { background: rgba(61,214,140,0.15); color: var(--green); }
+  .badge-orange { background: rgba(251,146,60,0.15);  color: var(--orange); }
+  .badge-gold   { background: rgba(232,184,75,0.15);  color: var(--gold); }
+  .badge-blue   { background: rgba(96,165,250,0.15);  color: var(--blue); }
+
+  /* ── Table of Contents ─────────────────────────────────────────── */
+  .toc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 24px;
+    align-items: start;
+  }
+  .toc-group-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .toc-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 11px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-decoration: none;
+    margin-bottom: 6px;
+    transition: all .15s;
+  }
+  .toc-item:last-child { margin-bottom: 0; }
+  .toc-item:hover {
+    border-color: rgba(232,184,75,0.4);
+    background: var(--gold-glow);
+    transform: translateX(2px);
+  }
+  .toc-icon { font-size: 18px; flex-shrink:0; margin-top:1px; }
+  .toc-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .toc-sub   { font-size: 12px; color: var(--dim); margin-top: 2px; }
+
+  /* ── Hamburger button (mobile only) ───────────────────────────── */
+  .menu-btn {
+    display: none;
+    align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  .menu-btn svg { width: 18px; height: 18px; stroke: var(--text); }
+
+  /* ── Mobile drawer overlay ─────────────────────────────────────── */
+  .drawer-overlay {
+    display: none;
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(2px);
+  }
+  .drawer-overlay.open { display: block; }
+
+  aside.drawer {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 201;
+    width: 280px;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    padding-top: 56px;         /* room for close button */
+  }
+  aside.drawer.open { transform: translateX(0); }
+
+  .drawer-close {
+    display: none;
+    position: absolute; top: 12px; right: 12px;
+    width: 32px; height: 32px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    align-items: center; justify-content: center;
+  }
+  .drawer-close svg { width: 16px; height: 16px; stroke: var(--dim); }
+
+  /* ── Responsive ────────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    aside { display: none; }
+    aside.drawer { display: block; }   /* always in DOM, shown via JS */
+    .drawer-close { display: flex; }
+    .menu-btn { display: flex; }
+    .hdr-badge { display: none; }
+    main  { padding: 28px 24px 60px; }
+    .choice-grid { grid-template-columns: 1fr; }
+    .two-col { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    main { padding: 20px 16px 60px; }
+    .effect-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* ── Highlight on scroll-to ────────────────────────────────────── */
+  :target { scroll-margin-top: calc(var(--hdr-h) + 20px); }
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════════════════════════ -->
+<header>
+  <div class="hdr-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#0f1117" stroke-width="2.5" stroke-linecap="round">
+      <circle cx="12" cy="12" r="9"/>
+      <polyline points="12 7 12 12 15.5 12"/>
+    </svg>
+  </div>
+  <h1>Hollow <span>Clock</span> — Help &amp; User Guide</h1>
+  <div class="hdr-badge">ESP32-S3 Firmware</div>
+  <button class="menu-btn" id="menu-btn" aria-label="Open navigation">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round">
+      <line x1="3" y1="6"  x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+</header>
+
+<div class="drawer-overlay" id="drawer-overlay"></div>
+
+<!-- ═══ LAYOUT ════════════════════════════════════════════════════════════ -->
+<div class="layout">
+
+<!-- ═══ SIDEBAR ══════════════════════════════════════════════════════════ -->
+<aside class="drawer" id="sidebar">
+  <button class="drawer-close" id="drawer-close" aria-label="Close navigation">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round">
+      <line x1="18" y1="6" x2="6" y2="18"/>
+      <line x1="6"  y1="6" x2="18" y2="18"/>
+    </svg>
+  </button>
+  <div class="nav-group">
+    <div class="nav-label">Introduction</div>
+    <a class="nav-link active" href="#overview"><span class="nav-icon">🕰️</span>Overview</a>
+    <a class="nav-link" href="#toc"><span class="nav-icon">📋</span>Table of Contents</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Getting Started</div>
+    <a class="nav-link" href="#first-time"><span class="nav-icon">🚀</span>First-Time Setup</a>
+    <a class="nav-link" href="#network"><span class="nav-icon">📡</span>Network Connection</a>
+    <a class="nav-link" href="#finding"><span class="nav-icon">🔍</span>Finding the Device</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Web Interface</div>
+    <a class="nav-link" href="#clock-tab"><span class="nav-icon">🕐</span>Clock Tab</a>
+    <a class="nav-link" href="#lights-tab"><span class="nav-icon">💡</span>Lights Tab</a>
+    <a class="nav-link" href="#config-tab"><span class="nav-icon">⚙️</span>Config Tab</a>
+    <a class="nav-link" href="#sensor-tab"><span class="nav-icon">🎯</span>Sensor Tab</a>
+    <a class="nav-link" href="#info-tab"><span class="nav-icon">📊</span>Info Tab</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Smart Home</div>
+    <a class="nav-link" href="#matter"><span class="nav-icon">🏠</span>Matter / Alexa / HomeKit</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Maintenance</div>
+    <a class="nav-link" href="#wifi-change"><span class="nav-icon">🔄</span>Changing WiFi</a>
+    <a class="nav-link" href="#factory-reset"><span class="nav-icon">🔃</span>Factory Reset</a>
+    <a class="nav-link" href="#troubleshoot"><span class="nav-icon">🛠️</span>Troubleshooting</a>
+  </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
+<main>
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     OVERVIEW
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="overview">
+  <div class="section-header">
+    <div class="section-icon">🕰️</div>
+    <div>
+      <h2>Overview</h2>
+      <p>What this clock is and how it works</p>
+    </div>
+  </div>
+
+  <p>This is an ESP32-S3 powered analog clock with a stepper-motor-driven minute hand, an optical position sensor, an OLED display, and two independently controllable LED strips. It connects to your WiFi network, syncs time automatically over the internet, and is controllable from any browser on your network — as well as from Alexa, Apple Home, or Google Home via the Matter smart-home standard.</p>
+
+  <div class="two-col" style="margin:20px 0;">
+    <div class="card" style="padding:16px 18px;">
+      <div style="font-size:28px; margin-bottom:8px;">🕐</div>
+      <div style="font-weight:700; margin-bottom:4px;">Accurate Timekeeping</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">Syncs to internet time servers (SNTP) automatically. The optical sensor corrects minor drift near the top of each hour — no manual adjustments needed.</p>
+    </div>
+    <div class="card" style="padding:16px 18px;">
+      <div style="font-size:28px; margin-bottom:8px;">💡</div>
+      <div style="font-weight:700; margin-bottom:4px;">Dual LED Strips</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">Independent Ring and Base strips with 8 animated effects, full colour control, and brightness adjustment. Works with Alexa and other smart-home platforms.</p>
+    </div>
+    <div class="card" style="padding:16px 18px;">
+      <div style="font-size:28px; margin-bottom:8px;">🌐</div>
+      <div style="font-weight:700; margin-bottom:4px;">Web Interface</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">A full-featured single-page app accessible from any browser on your network. No app install required. Updates live every second.</p>
+    </div>
+    <div class="card" style="padding:16px 18px;">
+      <div style="font-size:28px; margin-bottom:8px;">🏠</div>
+      <div style="font-weight:700; margin-bottom:4px;">Smart Home Ready</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">Matter-certified. Commission once with Alexa, Apple Home, or Google Home and control the lights with voice commands or automations.</p>
+    </div>
+  </div>
+
+  <h3>Hardware at a Glance</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Component</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Microcontroller</strong></td><td>ESP32-S3 — dual-core, WiFi + Bluetooth 5 / BLE</td></tr>
+        <tr><td><strong>Motor</strong></td><td>28BYJ-48 stepper motor, half-step mode, 4096 steps/rev</td></tr>
+        <tr><td><strong>Position sensor</strong></td><td>LED + LDR detecting a reflective slot at 12:00 on the clock ring</td></tr>
+        <tr><td><strong>Display</strong></td><td>SSD1306 0.96&quot; OLED (128×64), I²C</td></tr>
+        <tr><td><strong>Encoder</strong></td><td>Adafruit Seesaw rotary encoder with A/B buttons</td></tr>
+        <tr><td><strong>Ring LEDs</strong></td><td>WS2812B addressable strip around the clock face (default 24 LEDs)</td></tr>
+        <tr><td><strong>Base LEDs</strong></td><td>WS2812B addressable strip underneath the clock (default 6 LEDs)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Web Interface Tabs</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Tab</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tab-pill"><span class="tab-dot"></span>Clock</span></td><td>Current time, hand alignment, and fine-tune controls</td></tr>
+        <tr><td><span class="tab-pill"><span class="tab-dot"></span>Lights</span></td><td>Colour, brightness, and effects for Ring and Base strips</td></tr>
+        <tr><td><span class="tab-pill"><span class="tab-dot"></span>Config</span></td><td>Motor speed &amp; direction, LED lengths, hostname, WiFi, timezone, firmware updates</td></tr>
+        <tr><td><span class="tab-pill"><span class="tab-dot"></span>Sensor</span></td><td>Optical sensor calibration and diagnostics</td></tr>
+        <tr><td><span class="tab-pill"><span class="tab-dot"></span>Info</span></td><td>Read-only system status — IP, uptime, signal strength, memory</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     TABLE OF CONTENTS
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="toc">
+  <div class="section-header">
+    <div class="section-icon">📋</div>
+    <div>
+      <h2>Table of Contents</h2>
+      <p>Jump to any section</p>
+    </div>
+  </div>
+
+  <div class="toc-grid">
+    <div class="toc-group">
+      <div class="toc-group-label">Getting Started</div>
+      <a class="toc-item" href="#first-time">
+        <span class="toc-icon">🚀</span>
+        <div>
+          <div class="toc-title">First-Time Setup</div>
+          <div class="toc-sub">7-step walkthrough from power-on to a working clock</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#network">
+        <span class="toc-icon">📡</span>
+        <div>
+          <div class="toc-title">Network Connection</div>
+          <div class="toc-sub">WiFi setup or Matter smart-home commissioning</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#finding">
+        <span class="toc-icon">🔍</span>
+        <div>
+          <div class="toc-title">Finding the Device</div>
+          <div class="toc-sub">IP address, mDNS hostname, and browser access</div>
+        </div>
+      </a>
+    </div>
+
+    <div class="toc-group">
+      <div class="toc-group-label">Web Interface</div>
+      <a class="toc-item" href="#clock-tab">
+        <span class="toc-icon">🕐</span>
+        <div>
+          <div class="toc-title">Clock Tab</div>
+          <div class="toc-sub">Time display, hand alignment, fine-tune controls</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#lights-tab">
+        <span class="toc-icon">💡</span>
+        <div>
+          <div class="toc-title">Lights Tab</div>
+          <div class="toc-sub">Colour, brightness, and animated effects</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#config-tab">
+        <span class="toc-icon">⚙️</span>
+        <div>
+          <div class="toc-title">Config Tab</div>
+          <div class="toc-sub">Motor, LEDs, hostname, WiFi, timezone, firmware</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#sensor-tab">
+        <span class="toc-icon">🎯</span>
+        <div>
+          <div class="toc-title">Sensor Tab</div>
+          <div class="toc-sub">Optical position sensor calibration</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#info-tab">
+        <span class="toc-icon">📊</span>
+        <div>
+          <div class="toc-title">Info Tab</div>
+          <div class="toc-sub">System status and diagnostics</div>
+        </div>
+      </a>
+    </div>
+
+    <div class="toc-group">
+      <div class="toc-group-label">Smart Home &amp; Maintenance</div>
+      <a class="toc-item" href="#matter">
+        <span class="toc-icon">🏠</span>
+        <div>
+          <div class="toc-title">Matter / Smart Home</div>
+          <div class="toc-sub">Alexa, Apple Home, and Google Home integration</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#wifi-change">
+        <span class="toc-icon">🔄</span>
+        <div>
+          <div class="toc-title">Changing WiFi Credentials</div>
+          <div class="toc-sub">Router replacement and network changes</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#factory-reset">
+        <span class="toc-icon">🔃</span>
+        <div>
+          <div class="toc-title">Factory Reset</div>
+          <div class="toc-sub">Clear network and commissioning data</div>
+        </div>
+      </a>
+      <a class="toc-item" href="#troubleshoot">
+        <span class="toc-icon">🛠️</span>
+        <div>
+          <div class="toc-title">Troubleshooting</div>
+          <div class="toc-sub">Common issues and how to fix them</div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     FIRST-TIME SETUP
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="first-time">
+  <div class="section-header">
+    <div class="section-icon">🚀</div>
+    <div>
+      <h2>First-Time Setup</h2>
+      <p>Complete walkthrough from power-on to a fully working clock</p>
+    </div>
+  </div>
+
+  <p>The setup sequence below is the recommended order for a freshly flashed device. Each step builds on the previous one. Most steps only need to be done once.</p>
+
+  <div class="callout good">
+    <span class="callout-icon">✓</span>
+    <p>Once setup is complete, the clock maintains accurate time automatically via internet sync — no manual time-setting is needed after power cycles.</p>
+  </div>
+
+  <h3>Step 1 — Connect to WiFi</h3>
+  <p>On first boot the display shows a setup screen. Choose a connection method and follow the prompts. See the <a href="#network" style="color:var(--gold)">Network Connection</a> section for full details.</p>
+
+  <h3>Step 2 — Find the Device Address</h3>
+  <p>Once WiFi is connected, navigate on the clock display:</p>
+  <div class="card" style="padding:14px 18px; display:flex; align-items:center; gap:12px;">
+    <span style="font-size:22px;">📟</span>
+    <div>
+      <div style="font-size:13px; color:var(--dim);">On the clock OLED</div>
+      <div style="font-weight:600; margin-top:2px;">Main Menu → Status → Network</div>
+      <div style="font-size:13px; color:var(--dim); margin-top:4px;">Shows the IP address and mDNS hostname (e.g. <code>clock_a1b2</code>)</div>
+    </div>
+  </div>
+  <p>Open a browser and navigate to <code>http://192.168.x.x</code> or <code>http://clock_a1b2.local</code>.</p>
+
+  <h3>Step 3 — Check for Firmware Updates</h3>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Go to the <span class="tab-pill"><span class="tab-dot"></span>Config</span> tab in the web interface.</div></li>
+    <li><div class="step-num">2</div><div>Scroll to the <strong>Firmware Update</strong> card.</div></li>
+    <li><div class="step-num">3</div><div>Press <strong>Check for Updates</strong>. If a newer version is shown, press <strong>Update Now</strong>.</div></li>
+    <li><div class="step-num">4</div><div>Watch the OLED display for progress. The device reboots automatically when done.</div></li>
+  </ol>
+  <div class="callout warn">
+    <span class="callout-icon">⚠</span>
+    <p>Do not power off the clock during an update. Wait for the OLED to show the completion message.</p>
+  </div>
+
+  <h3>Step 4 — Set a Hostname (Optional)</h3>
+  <p>On the <span class="tab-pill"><span class="tab-dot"></span>Config</span> tab, find <strong>Device Hostname</strong>. Replace the default (e.g. <code>clock_a1b2</code>) with something memorable like <code>office_clock</code>. Press <strong>Save</strong> — the new address takes effect immediately at <code>http://office_clock.local</code>.</p>
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p>Use lowercase letters, numbers, and underscores or hyphens only. Avoid spaces and special characters.</p>
+  </div>
+
+  <h3>Step 5 — Verify Motor Direction</h3>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>On the <span class="tab-pill"><span class="tab-dot"></span>Clock</span> tab, find the <strong>Fine Tune</strong> card and press <strong>1 Min Fwd →</strong>.</div></li>
+    <li><div class="step-num">2</div><div>Watch the minute hand. It should move <strong>clockwise</strong>.</div></li>
+    <li><div class="step-num">3</div><div>If it moved counter-clockwise, go to <span class="tab-pill"><span class="tab-dot"></span>Config</span> → <strong>Motor Direction</strong>, select <strong>Reverse</strong>, and press <strong>Save</strong>.</div></li>
+    <li><div class="step-num">4</div><div>Test again with <strong>1 Min Fwd →</strong> to confirm.</div></li>
+  </ol>
+
+  <h3>Step 6 — Calibrate the Optical Sensor</h3>
+  <p>The sensor detects a reflective slot on the clock ring to know where 12:00 is. Calibration is two steps.</p>
+
+  <div class="callout info">
+    <span class="callout-icon">ⓘ</span>
+    <p>Perform calibration under the normal ambient lighting the clock will operate in. Avoid shining a direct light at the sensor.</p>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">Step A — Background Sample</div>
+      <ol class="steps" style="margin-top:4px;">
+        <li><div class="step-num">1</div><div>Ensure the minute hand is <strong>not</strong> over the sensor slot.</div></li>
+        <li><div class="step-num">2</div><div>Press <strong>Sample Background</strong>.</div></li>
+        <li><div class="step-num">3</div><div>The ring advances ~10 minutes while sampling (~12 seconds).</div></li>
+        <li><div class="step-num">4</div><div>Result shows <strong>Mean</strong> and <strong>Threshold</strong> values.</div></li>
+      </ol>
+    </div>
+    <div class="card">
+      <div class="card-title">Step B — Find Slot &amp; Set Offset</div>
+      <ol class="steps" style="margin-top:4px;">
+        <li><div class="step-num">1</div><div>Press <strong>Find Slot ▶</strong>. The ring advances until the slot is detected.</div></li>
+        <li><div class="step-num">2</div><div>Use the <strong>◀ Back</strong> and <strong>Fwd ▶</strong> buttons to position the hand exactly at 12:00.</div></li>
+        <li><div class="step-num">3</div><div>Press <strong>Save Offset</strong> when the hand is correctly positioned.</div></li>
+      </ol>
+    </div>
+  </div>
+
+  <h3>Step 7 — Set the Clock to the Correct Time</h3>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>On the <span class="tab-pill"><span class="tab-dot"></span>Clock</span> tab, find the <strong>Observed Clock Position</strong> card.</div></li>
+    <li><div class="step-num">2</div><div>Look at the physical clock face and note where the minute hand is pointing.</div></li>
+    <li><div class="step-num">3</div><div>Enter that time in the input field and press <strong>Set Clock to Actual Time</strong>.</div></li>
+    <li><div class="step-num">4</div><div>The motor advances the hands to the correct current time.</div></li>
+  </ol>
+
+  <div class="callout good">
+    <span class="callout-icon">✓</span>
+    <p><strong>Setup complete.</strong> Once the green <strong>● Internet synced</strong> badge appears on the Clock tab, the clock maintains accurate time automatically. The sensor performs an automatic drift correction near the top of each hour.</p>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     NETWORK CONNECTION
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="network">
+  <div class="section-header">
+    <div class="section-icon">📡</div>
+    <div>
+      <h2>Network Connection</h2>
+      <p>WiFi setup and Matter smart-home commissioning</p>
+    </div>
+  </div>
+
+  <p>The clock supports two ways to connect to your network. Choose based on whether you use a smart-home platform.</p>
+
+  <div class="choice-grid">
+    <div class="choice-card">
+      <div class="choice-num">Option 1</div>
+      <h4>Setup WiFi</h4>
+      <p>Enter your SSID and password directly on the device using the rotary encoder and buttons. Simplest option — works without any smart-home app.</p>
+    </div>
+    <div class="choice-card blue">
+      <div class="choice-num" style="color:var(--blue)">Option 2</div>
+      <h4>Matter</h4>
+      <p>Commission via Amazon Alexa, Apple Home, or Google Home over Bluetooth. Integrates the clock with your smart-home platform from the start.</p>
+    </div>
+  </div>
+
+  <p>On first boot with no stored credentials, the display shows:</p>
+  <pre>  First-Time Setup
+
+&gt; Matter
+  Setup WiFi
+
+A/B/Rot: pick
+LongA/Enc: ok</pre>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Input</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Rotate encoder</kbd> or tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Toggle between Matter and Setup WiFi</td></tr>
+        <tr><td><kbd>Long-press A</kbd> ≥ 800 ms</td><td>Confirm selection</td></tr>
+        <tr><td><kbd>Encoder press</kbd></td><td>Confirm selection</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Option 1 — Setup WiFi</h3>
+  <p>Select <strong>Setup WiFi</strong> and confirm. A character grid appears for text entry.</p>
+
+  <div class="card">
+    <div class="card-title">Text Entry Controls</div>
+    <div class="tbl-wrap" style="margin:0">
+      <table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Rotate</kbd> or tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Move cursor through the character grid</td></tr>
+          <tr><td><kbd>Long-press A</kbd></td><td>Append selected character</td></tr>
+          <tr><td><kbd>Encoder short press</kbd></td><td>Append selected character</td></tr>
+          <tr><td><kbd>Long-press B</kbd> or <kbd>Encoder long</kbd></td><td>Backspace — delete last character</td></tr>
+          <tr><td>Navigate to <kbd>&gt;</kbd> then press</td><td>Confirm and submit</td></tr>
+          <tr><td><kbd>Hold A + B</kbd> ≥ 800 ms</td><td>Cancel — return to choice screen</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p>Enter the SSID (exact, case-sensitive), then the password. Leave the password blank and confirm for open networks. The credentials are saved to non-volatile storage and used on all subsequent boots.</p>
+
+  <div class="callout warn">
+    <span class="callout-icon">⚠</span>
+    <p>If the connection fails, the display shows a message and restarts into first-time setup. Double-check the SSID and password — both are case-sensitive.</p>
+  </div>
+
+  <h3>Option 2 — Matter</h3>
+  <p>Select <strong>Matter</strong> and confirm. The display shows a pairing screen with a discriminator value and manual code:</p>
+  <pre> Matter Pairing
+Go to Smart Home
+
+
+Disc: XXXX
+&lt;manual code&gt;</pre>
+
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Open your smart-home app (Alexa, Apple Home, or Google Home).</div></li>
+    <li><div class="step-num">2</div><div>Choose <strong>Add Device</strong> and scan the QR code, or enter the manual code shown on the display.</div></li>
+    <li><div class="step-num">3</div><div>The app delivers WiFi credentials to the clock over Bluetooth. The display exits automatically when commissioning completes.</div></li>
+  </ol>
+
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p>To cancel and return to the choice screen, press the encoder button, or tap A or B once. This does not stop the Matter stack — re-selecting Matter shows the same pairing screen.</p>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     FINDING THE DEVICE
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="finding">
+  <div class="section-header">
+    <div class="section-icon">🔍</div>
+    <div>
+      <h2>Finding the Device</h2>
+      <p>How to locate and open the web interface</p>
+    </div>
+  </div>
+
+  <p>After connecting to WiFi, navigate on the clock display to find its address:</p>
+  <div class="card" style="padding:14px 18px; display:flex; align-items:center; gap:12px;">
+    <span style="font-size:22px;">📟</span>
+    <div style="font-weight:600;">Main Menu → Status → Network</div>
+  </div>
+
+  <p>The screen shows both the IP address and the mDNS hostname. Either can be used in a browser:</p>
+  <pre>http://192.168.50.42
+http://clock_a1b2.local</pre>
+
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p><strong>.local addresses:</strong> Work natively on macOS, iOS, Android, and most Linux systems. On Windows they require Bonjour (bundled with iTunes) or Windows 11's built-in mDNS support.</p>
+  </div>
+
+  <p>The web interface updates automatically every second — there is no need to refresh the page.</p>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     CLOCK TAB
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="clock-tab">
+  <div class="section-header">
+    <div class="section-icon">🕐</div>
+    <div>
+      <h2>Clock Tab</h2>
+      <p>Time display, hand alignment, and fine-tuning controls</p>
+    </div>
+  </div>
+
+  <h3>Status</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Element</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Time</strong></td><td>Current local time (12-hour format)</td></tr>
+        <tr><td><strong>Date</strong></td><td>Full date</td></tr>
+        <tr><td><span class="badge badge-green">● Internet synced</span></td><td>Green badge when SNTP is active and time is accurate. If not shown, the clock has not yet synced with a time server.</td></tr>
+        <tr><td><strong>Timezone</strong></td><td>POSIX timezone string — resolved automatically from IP geolocation, or from the override set in Config</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Observed Clock Position</h3>
+  <p>Use this when the hands need to be aligned to the correct time — for example after first setup, after a motor stall, or after the clock was powered off for an extended period.</p>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Look at the physical clock face and note where the minute hand is pointing.</div></li>
+    <li><div class="step-num">2</div><div>Enter that time in the input field.</div></li>
+    <li><div class="step-num">3</div><div>Press <strong>Set Clock to Actual Time</strong>.</div></li>
+    <li><div class="step-num">4</div><div>The motor advances the hands to the correct current time. This may take a few minutes if the hands are significantly behind.</div></li>
+    <li><div class="step-num">5</div><div>Press <strong>Cancel</strong> at any time to stop movement immediately.</div></li>
+  </ol>
+
+  <h3>Fine Tune</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Button</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1 Min Fwd →</strong></td><td>Advance the hand by exactly one clock-minute</td></tr>
+        <tr><td><strong>1 Min Back ←</strong></td><td>Reverse the hand by exactly one clock-minute</td></tr>
+        <tr><td><strong>Step Fwd / Step Back</strong></td><td>Move 8 half-steps at a time for precise micro-positioning</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p>Fine Tune is particularly useful after sensor calibration — use it to verify the hand lands exactly on 12:00 and make small corrections if needed.</p>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     LIGHTS TAB
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="lights-tab">
+  <div class="section-header">
+    <div class="section-icon">💡</div>
+    <div>
+      <h2>Lights Tab</h2>
+      <p>Control the Ring and Base LED strips — colour, brightness, and effects</p>
+    </div>
+  </div>
+
+  <p>The clock has two independent WS2812B LED strips:</p>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">Ring</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">The LED ring around the clock face (default 24 LEDs)</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Base</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">The LEDs underneath the clock body (default 6 LEDs)</p>
+    </div>
+  </div>
+
+  <p>Use the <strong>APPLY TO</strong> selector at the top of the Lights tab to target <strong>Ring</strong>, <strong>Base</strong>, or <strong>Both</strong> strips at once. All colour, brightness, and effect changes apply to the selected target.</p>
+
+  <h3>Colour</h3>
+  <p>A palette of 21 colour presets is shown as swatches. Click a swatch to apply that colour immediately. The colours are calibrated to match the named colours that Alexa sends via Matter — what you set here is exactly what you'll get when you ask Alexa for the same colour.</p>
+
+  <h3>Brightness</h3>
+  <p>A slider from 0 to 255. Changes take effect as you drag. The setting is saved automatically.</p>
+
+  <h3>Effects</h3>
+  <div class="effect-grid">
+    <div class="effect-item">
+      <div class="effect-name">Static</div>
+      <div class="effect-desc">Solid colour, constant brightness</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Breathe</div>
+      <div class="effect-desc">Slow fade in and out</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Rainbow</div>
+      <div class="effect-desc">Cycles through the full colour spectrum</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Chase</div>
+      <div class="effect-desc">A bright pixel moves around the strip</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Sparkle</div>
+      <div class="effect-desc">Random pixels flash briefly</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Comet</div>
+      <div class="effect-desc">Bright head with fading tail sweeps around</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Wipe</div>
+      <div class="effect-desc">Fills pixel by pixel, then clears</div>
+    </div>
+    <div class="effect-item">
+      <div class="effect-name">Off</div>
+      <div class="effect-desc">Strip is dark</div>
+    </div>
+  </div>
+
+  <p>Effects are saved and resume after a power cycle. Note that Matter commands (Alexa, Apple Home) always switch a strip to <strong>Static</strong> mode — see the <a href="#matter" style="color:var(--gold)">Smart Home</a> section for details on working with both.</p>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     CONFIG TAB
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="config-tab">
+  <div class="section-header">
+    <div class="section-icon">⚙️</div>
+    <div>
+      <h2>Config Tab</h2>
+      <p>Persistent settings that survive power cycles</p>
+    </div>
+  </div>
+
+  <h3>Motor Speed</h3>
+  <p>Controls how fast the stepper motor turns, in microseconds per half-step. Drag the slider and press <strong>Save Speed</strong>.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Value</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Lower</strong> (e.g. 1000 µs)</td><td>Faster rotation — louder</td></tr>
+        <tr><td><strong>Default</strong> (2000 µs)</td><td>~8 seconds per revolution</td></tr>
+        <tr><td><strong>Higher</strong> (e.g. 2500–3000 µs)</td><td>Slower, quieter — recommended for bedroom use</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p>The slider will not be overwritten while you are dragging it, even though the page updates live every second.</p>
+  </div>
+
+  <h3>Motor Direction</h3>
+  <p>If the minute hand moves counter-clockwise, select <strong>Reverse</strong> and press <strong>Save</strong>.</p>
+
+  <h3>LED Strip Lengths</h3>
+  <p>Sets the number of LEDs in each strip. Press <strong>Save</strong> after changing.</p>
+  <div class="two-col">
+    <div class="card" style="padding:14px 18px;">
+      <div class="card-title">Ring</div>
+      <div style="font-size:20px; font-weight:700;">24 <span style="font-size:13px; font-weight:400; color:var(--dim);">LEDs (default)</span></div>
+    </div>
+    <div class="card" style="padding:14px 18px;">
+      <div class="card-title">Base</div>
+      <div style="font-size:20px; font-weight:700;">6 <span style="font-size:13px; font-weight:400; color:var(--dim);">LEDs (default)</span></div>
+    </div>
+  </div>
+
+  <h3>Device Hostname</h3>
+  <p>The mDNS name used to reach the clock on the local network. Default is derived from the MAC address (e.g. <code>clock_a1b2</code>). Change to something memorable and press <strong>Save</strong>. Takes effect immediately — no restart required.</p>
+
+  <h3>WiFi Credentials</h3>
+  <p>Update the stored WiFi network name and password without using the physical buttons. Enter the new SSID and password and press <strong>Save &amp; Restart</strong>. The connection will drop briefly during restart.</p>
+
+  <h3>Timezone Override</h3>
+  <p>Normally the clock detects its timezone automatically via IP geolocation. To force a specific timezone, enter a POSIX TZ string and press <strong>Save</strong>. Leave blank to use automatic detection.</p>
+  <div class="card" style="padding:12px 16px;">
+    <div style="font-size:12px; color:var(--dim); margin-bottom:8px;">POSIX TZ string examples</div>
+    <div style="display:flex; flex-direction:column; gap:6px; font-size:13px;">
+      <div><code>CST6CDT,M3.2.0,M11.1.0</code> <span style="color:var(--dim); margin-left:8px;">US Central</span></div>
+      <div><code>EST5EDT,M3.2.0,M11.1.0</code> <span style="color:var(--dim); margin-left:8px;">US Eastern</span></div>
+      <div><code>PST8PDT,M3.2.0,M11.1.0</code> <span style="color:var(--dim); margin-left:8px;">US Pacific</span></div>
+      <div><code>GMT0BST,M3.5.0/1,M10.5.0</code> <span style="color:var(--dim); margin-left:8px;">UK</span></div>
+    </div>
+  </div>
+
+  <h3>Firmware Update (OTA)</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Element</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Running</strong></td><td>Currently installed firmware version</td></tr>
+        <tr><td><strong>Latest</strong></td><td>Most recent version available on GitHub (populated after checking)</td></tr>
+        <tr><td><strong>Check for Updates</strong></td><td>Queries GitHub for the latest release</td></tr>
+        <tr><td><strong>Update Now</strong></td><td>Downloads and installs the update; device reboots automatically</td></tr>
+        <tr><td><strong>Auto Update</strong></td><td>When enabled, the device checks once daily and installs updates automatically</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout warn">
+    <span class="callout-icon">⚠</span>
+    <p>Do not power off the clock while an update is in progress. The OLED display shows progress and will indicate when it is safe to continue.</p>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     SENSOR TAB
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="sensor-tab">
+  <div class="section-header">
+    <div class="section-icon">🎯</div>
+    <div>
+      <h2>Sensor Tab</h2>
+      <p>Calibrate the optical position sensor for accurate hourly drift correction</p>
+    </div>
+  </div>
+
+  <p>The optical sensor uses an LED and a light-dependent resistor (LDR) to detect a reflective slot on the clock ring as it passes 12:00 each hour. The clock uses this to automatically correct up to a few minutes of drift without any user intervention.</p>
+
+  <div class="callout info">
+    <span class="callout-icon">ⓘ</span>
+    <p>Calibration only needs to be done once during initial setup. Redo it if the clock moves to a significantly different lighting environment, or if you notice the hands jumping at the top of the hour.</p>
+  </div>
+
+  <h3>Sample Background</h3>
+  <p>Measures ambient light across multiple ring positions to establish the detection threshold.</p>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Ensure the minute hand is <strong>not</strong> directly over the sensor slot (roughly anywhere except 12:00).</div></li>
+    <li><div class="step-num">2</div><div>Press <strong>Sample Background</strong>.</div></li>
+    <li><div class="step-num">3</div><div>The ring advances approximately 10 minutes while sampling (~12 seconds).</div></li>
+    <li><div class="step-num">4</div><div>The result shows the measured <strong>Mean</strong> and calculated <strong>Threshold</strong>.</div></li>
+  </ol>
+
+  <h3>Find Slot / Set Offset</h3>
+  <p>Locates the reflective slot and calibrates its exact position relative to 12:00.</p>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Press <strong>Find Slot ▶</strong>. The ring advances until the slot is detected.</div></li>
+    <li><div class="step-num">2</div><div>Use <strong>◀ Back</strong> and <strong>Fwd ▶</strong> to position the minute hand exactly at 12:00 on the clock face.</div></li>
+    <li><div class="step-num">3</div><div>Press <strong>Save Offset</strong> when correctly positioned.</div></li>
+  </ol>
+  <div class="callout tip">
+    <span class="callout-icon">💡</span>
+    <p>If the slot is not found, check sensor wiring and ensure the background was sampled correctly first. Press <strong>Try Again</strong> to retry.</p>
+  </div>
+
+  <h3>Read Now</h3>
+  <p>Takes a single sensor reading and displays the raw ADC value. Use this to verify the sensor detects the slot when the ring is manually positioned over it.</p>
+
+  <h3>Live Scan</h3>
+  <p>Advances the ring a set number of minutes and plots the ADC reading at each step. Useful for diagnosing sensor issues or confirming the slot is clearly visible above the background threshold.</p>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     INFO TAB
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="info-tab">
+  <div class="section-header">
+    <div class="section-icon">📊</div>
+    <div>
+      <h2>Info Tab</h2>
+      <p>Read-only system status and diagnostics</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><strong>IP Address</strong></td><td>Local network address assigned by your router</td></tr>
+        <tr><td><strong>Hostname</strong></td><td>mDNS hostname (use as <code>name.local</code> in a browser)</td></tr>
+        <tr><td><strong>SSID / RSSI</strong></td><td>WiFi network name and signal strength in dBm</td></tr>
+        <tr><td><strong>Uptime</strong></td><td>Time elapsed since last boot</td></tr>
+        <tr><td><strong>Free Heap</strong></td><td>Available memory — useful for diagnosing crashes or instability</td></tr>
+        <tr><td><strong>Firmware</strong></td><td>Running version string</td></tr>
+        <tr><td><strong>Sensor ADC</strong></td><td>Most recent raw optical sensor reading</td></tr>
+        <tr><td><strong>Sensor Threshold</strong></td><td>Calibrated detection threshold value</td></tr>
+        <tr><td><strong>Displayed Position</strong></td><td>Where the clock manager believes the minute hand is pointing</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The Info tab also contains the <strong>Matter</strong> section with commissioning controls — see the <a href="#matter" style="color:var(--gold)">Smart Home</a> section below.</p>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     MATTER / SMART HOME
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="matter">
+  <div class="section-header">
+    <div class="section-icon">🏠</div>
+    <div>
+      <h2>Matter / Smart Home Integration</h2>
+      <p>Alexa, Apple Home, and Google Home control</p>
+    </div>
+  </div>
+
+  <p>The clock appears on your smart-home network as two <strong>Extended Color Light</strong> devices:</p>
+  <div class="two-col">
+    <div class="card" style="padding:14px 18px;">
+      <div class="card-title">Clock Ring</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">Controls the ring LED strip around the clock face</p>
+    </div>
+    <div class="card" style="padding:14px 18px;">
+      <div class="card-title">Clock Base</div>
+      <p style="font-size:13px; color:var(--dim); margin:0;">Controls the base LED strip underneath the clock</p>
+    </div>
+  </div>
+
+  <h3>What You Can Control via Matter</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Control</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><strong>On / Off</strong></td><td>Turns the strip on or off</td></tr>
+        <tr><td><strong>Brightness</strong></td><td>Sets light level (0–100%)</td></tr>
+        <tr><td><strong>Colour</strong></td><td>Sets a specific colour by name, hex, or colour picker</td></tr>
+        <tr><td><strong>Colour Temperature</strong></td><td>Sets warm to cool white tones</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Effects and Matter</h3>
+  <div class="callout info">
+    <span class="callout-icon">ⓘ</span>
+    <p><strong>Matter commands always use Static mode.</strong> When Alexa or another controller sends a colour or brightness command, the strip switches to a solid, static colour — any running effect (Breathe, Rainbow, etc.) is replaced. This is by design: smart-home platforms have no concept of animated effects.</p>
+  </div>
+
+  <p><strong>Practical workflow for using both:</strong></p>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Use the <strong>web interface Lights tab</strong> to choose an effect (e.g. Breathe in warm white). Effects are saved and resume after power cycles.</div></li>
+    <li><div class="step-num">2</div><div>Use <strong>Alexa / Matter</strong> to turn the strip on and off, or to switch to a specific solid colour for a scene.</div></li>
+    <li><div class="step-num">3</div><div>If you want the effect back after a Matter command, return to the web interface and re-select it.</div></li>
+  </ol>
+
+  <h3>Colour Accuracy</h3>
+  <p>Alexa sends colours using the XY colour space. The clock converts these to RGB and normalises to full brightness, then applies the configured brightness separately. The colour swatches on the Lights tab are calibrated to match Alexa's named colours exactly.</p>
+
+  <h3>Adding the Clock to a Second Smart-Home Platform</h3>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Navigate to the <span class="tab-pill"><span class="tab-dot"></span>Info</span> tab and find the <strong>Matter</strong> section.</div></li>
+    <li><div class="step-num">2</div><div>Press <strong>Open Commissioning Window</strong>.</div></li>
+    <li><div class="step-num">3</div><div>Scan the QR code or enter the pairing code in the second platform's app.</div></li>
+  </ol>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     CHANGING WIFI
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="wifi-change">
+  <div class="section-header">
+    <div class="section-icon">🔄</div>
+    <div>
+      <h2>Changing WiFi Credentials</h2>
+      <p>What to do when you replace your router or change your network name / password</p>
+    </div>
+  </div>
+
+  <p>There are three ways to update the stored WiFi credentials:</p>
+
+  <div class="card">
+    <div class="card-title">Method 1 — Web Interface (easiest)</div>
+    <p style="margin-bottom:8px;">While the clock is still connected to the old network:</p>
+    <ol class="steps">
+      <li><div class="step-num">1</div><div>Go to <span class="tab-pill"><span class="tab-dot"></span>Config</span> → <strong>WiFi Credentials</strong>.</div></li>
+      <li><div class="step-num">2</div><div>Enter the new SSID and password.</div></li>
+      <li><div class="step-num">3</div><div>Press <strong>Save &amp; Restart</strong>. The clock restarts and connects to the new network.</div></li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Method 2 — On-device menu</div>
+    <p style="margin:0;">Navigate to <strong>Main Menu → Network → Set WiFi</strong> and enter new credentials using the encoder text-entry interface.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Method 3 — WiFi not found screen</div>
+    <p style="margin-bottom:8px;">If the clock fails to connect at boot (wrong password, new router), a recovery screen appears:</p>
+    <pre style="margin:8px 0">WiFi not found!
+&lt;stored SSID&gt;
+A+B: Full reset
+Btn: New WiFi
+Restart: Xm Xs</pre>
+    <div class="tbl-wrap" style="margin:8px 0 0">
+      <table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Single button press</kbd> or <kbd>Encoder press</kbd></td><td>Enter new WiFi credentials using the on-screen text entry</td></tr>
+          <tr><td><kbd>Hold A + B</kbd> 2 seconds</td><td>Full reset — clears all WiFi and Matter data, restarts into first-time setup</td></tr>
+          <tr><td>Timeout (10 minutes)</td><td>Device restarts and tries again</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     FACTORY RESET
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="factory-reset">
+  <div class="section-header">
+    <div class="section-icon">🔃</div>
+    <div>
+      <h2>Factory Reset</h2>
+      <p>Clear all network and commissioning data</p>
+    </div>
+  </div>
+
+  <p>A factory reset clears WiFi credentials, Matter fabric data, and commissioning flags. The device restarts into first-time setup.</p>
+
+  <div class="callout good">
+    <span class="callout-icon">✓</span>
+    <p>LED effects, motor speed, motor direction, sensor calibration, and hostname are <strong>preserved</strong> after a factory reset. Only network and commissioning data is erased.</p>
+  </div>
+
+  <h3>How to Perform a Factory Reset</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Input</th><th>Duration</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><kbd>Hold A + B</kbd></td>
+          <td>5 seconds</td>
+          <td>Display shows <em>WiFi Reset! / Restarting…</em> then device restarts into first-time setup</td>
+        </tr>
+        <tr>
+          <td><kbd>Hold encoder button</kbd></td>
+          <td>5 seconds</td>
+          <td>Same as above</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <span class="callout-icon">⚠</span>
+    <p>After a factory reset, the clock will need to be re-commissioned in any smart-home app (Alexa, Apple Home, Google Home) it was previously paired with.</p>
+  </div>
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────────────
+     TROUBLESHOOTING
+────────────────────────────────────────────────────────────────────────── -->
+<section class="section" id="troubleshoot">
+  <div class="section-header">
+    <div class="section-icon">🛠️</div>
+    <div>
+      <h2>Troubleshooting</h2>
+      <p>Common issues and how to resolve them</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Clock shows wrong time</div>
+    <p>Check the <span class="badge badge-green">● Internet synced</span> badge on the Clock tab. If it is not shown, the clock has not received a time sync — verify WiFi is connected on the Info tab. If WiFi is connected but the time is wrong, check the <strong>Timezone</strong> field; set an override in Config if geolocation is incorrect.</p>
+    <p style="margin:0">If the physical hands are misaligned with the displayed time, use the <strong>Observed Clock Position</strong> card on the Clock tab to re-align them.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Minute hand moves the wrong direction</div>
+    <p style="margin:0">Go to <span class="tab-pill"><span class="tab-dot"></span>Config</span> → <strong>Motor Direction</strong>, select <strong>Reverse</strong>, and press <strong>Save</strong>.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Hands jump backward at the top of the hour</div>
+    <p style="margin:0">The optical sensor is triggering outside the expected window. Re-run the <strong>Sample Background</strong> step in the Sensor tab under normal ambient lighting conditions, then redo the <strong>Find Slot / Set Offset</strong> calibration.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Can't reach the web interface</div>
+    <ul style="padding-left:18px; font-size:14px; color:var(--dim); line-height:1.9;">
+      <li>Confirm the clock is connected to WiFi via <strong>Main Menu → Status → Network</strong>.</li>
+      <li>Try the IP address instead of the <code>.local</code> hostname.</li>
+      <li>On Windows, <code>.local</code> addresses require Bonjour or Windows 11.</li>
+      <li>Ensure your phone or computer is on the same WiFi network as the clock.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title">LEDs not working or showing wrong colours</div>
+    <p>Verify the strip lengths in <span class="tab-pill"><span class="tab-dot"></span>Config</span> → <strong>LED Strip Lengths</strong> match your actual hardware. If Alexa colours look different from the web swatches, they should match — the swatches are calibrated to Alexa's XY colour values.</p>
+    <p style="margin:0">If a Matter command recently changed the colour, the effect was replaced with Static. Re-select the desired effect on the Lights tab.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">WiFi not connecting after router change</div>
+    <p style="margin:0">See the <a href="#wifi-change" style="color:var(--gold)">Changing WiFi Credentials</a> section. The quickest method is the web interface Config tab while the clock is still reachable on the old network. If the network is already gone, use the <em>WiFi not found</em> recovery screen at boot.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Clock not moving after power cycle</div>
+    <p style="margin:0">The clock waits for an internet time sync (SNTP) before starting the motor. This prevents the hands from advancing from an incorrect starting position. Once WiFi connects and the time syncs, the motor will start. If WiFi is unavailable, the clock will not run — connect it to a network for full functionality.</p>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+// Highlight the active nav link based on scroll position
+(function() {
+  const links = document.querySelectorAll('.nav-link');
+  const sections = Array.from(links).map(l => {
+    const id = l.getAttribute('href').slice(1);
+    return document.getElementById(id);
+  }).filter(Boolean);
+
+  function onScroll() {
+    const scrollY = window.scrollY + 80;
+    let active = sections[0];
+    for (const sec of sections) {
+      if (sec.offsetTop <= scrollY) active = sec;
+    }
+    links.forEach(l => l.classList.toggle('active',
+      l.getAttribute('href') === '#' + active.id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// Mobile drawer
+(function() {
+  const sidebar  = document.getElementById('sidebar');
+  const overlay  = document.getElementById('drawer-overlay');
+  const openBtn  = document.getElementById('menu-btn');
+  const closeBtn = document.getElementById('drawer-close');
+
+  function open()  { sidebar.classList.add('open');  overlay.classList.add('open');  document.body.style.overflow = 'hidden'; }
+  function close() { sidebar.classList.remove('open'); overlay.classList.remove('open'); document.body.style.overflow = ''; }
+
+  openBtn.addEventListener('click', open);
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', close);
+
+  // Close drawer when a nav link is tapped
+  sidebar.querySelectorAll('.nav-link').forEach(l => l.addEventListener('click', close));
+})();
+</script>
+</body>
+</html>
