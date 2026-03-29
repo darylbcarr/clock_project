@@ -13,7 +13,7 @@
 LogEntry     EventLog::s_buf_[EventLog::CAPACITY];
 int          EventLog::s_head_    = 0;
 int          EventLog::s_count_   = 0;
-uint8_t      EventLog::s_enabled_ = LOG_ALL_MASK;
+uint8_t      EventLog::s_enabled_ = LOG_NONE_MASK;
 portMUX_TYPE EventLog::s_mux_     = portMUX_INITIALIZER_UNLOCKED;
 
 static constexpr const char* NVS_NS  = "clk_cfg";
@@ -167,7 +167,7 @@ void EventLog::load_config()
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
-        uint8_t v = LOG_ALL_MASK;
+        uint8_t v = LOG_NONE_MASK;
         nvs_get_u8(h, NVS_KEY, &v);
         s_enabled_ = v & LOG_ALL_MASK;
         nvs_close(h);
