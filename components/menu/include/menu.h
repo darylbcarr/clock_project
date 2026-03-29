@@ -44,7 +44,7 @@ class OtaManager;
 
 class Menu {
 public:
-    static constexpr uint8_t MAX_VISIBLE_ITEMS = 7;
+    static constexpr uint8_t MAX_VISIBLE_ITEMS = 6;  // 7 display lines − 1 title line
 
     /**
      * Callback that returns true when the user has signalled "dismiss"
