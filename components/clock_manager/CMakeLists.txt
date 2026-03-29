@@ -7,6 +7,7 @@ idf_component_register(
     REQUIRES
         stepper_motor
         config_store
+        event_log
         driver
         esp_adc
         esp_timer

@@ -2,6 +2,7 @@
 
 #include "clock_manager.h"
 #include "networking.h"
+#include "event_log.h"
 
 class LedManager;
 class OtaManager;
@@ -33,6 +34,8 @@ private:
     static esp_err_t on_api_cfg(httpd_req_t* req);
     static esp_err_t on_api_ota(httpd_req_t* req);
     static esp_err_t on_api_scan_results(httpd_req_t* req);
+    static esp_err_t on_api_logs_get(httpd_req_t* req);
+    static esp_err_t on_api_logs_post(httpd_req_t* req);
     static esp_err_t on_ws(httpd_req_t* req);
 
     // Background tasks

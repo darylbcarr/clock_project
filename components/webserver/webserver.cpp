@@ -3,6 +3,7 @@
 #include "led_manager.h"
 #include "ota_manager.h"
 #include "config_store.h"
+#include "event_log.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -51,12 +52,14 @@ void WebServer::start()
     }
 
     // Register URI handlers — store 'this' as user_ctx
-    httpd_uri_t root    = { "/",                   HTTP_GET,  on_root,             this };
-    httpd_uri_t stat    = { "/api/status",         HTTP_GET,  on_api_status,       this };
-    httpd_uri_t cmd     = { "/api/cmd",            HTTP_POST, on_api_cmd,          this };
-    httpd_uri_t cfg_uri = { "/api/cfg",            HTTP_POST, on_api_cfg,          this };
-    httpd_uri_t ota_uri = { "/api/ota",            HTTP_POST, on_api_ota,          this };
-    httpd_uri_t scan_r  = { "/api/scan-results",   HTTP_GET,  on_api_scan_results, this };
+    httpd_uri_t root     = { "/",                   HTTP_GET,  on_root,             this };
+    httpd_uri_t stat     = { "/api/status",         HTTP_GET,  on_api_status,       this };
+    httpd_uri_t cmd      = { "/api/cmd",            HTTP_POST, on_api_cmd,          this };
+    httpd_uri_t cfg_uri  = { "/api/cfg",            HTTP_POST, on_api_cfg,          this };
+    httpd_uri_t ota_uri  = { "/api/ota",            HTTP_POST, on_api_ota,          this };
+    httpd_uri_t scan_r   = { "/api/scan-results",   HTTP_GET,  on_api_scan_results, this };
+    httpd_uri_t logs_get = { "/api/logs",           HTTP_GET,  on_api_logs_get,     this };
+    httpd_uri_t logs_post= { "/api/logs",           HTTP_POST, on_api_logs_post,    this };
     httpd_uri_t ws   = {
         .uri      = "/ws",
         .method   = HTTP_GET,
@@ -71,6 +74,8 @@ void WebServer::start()
     httpd_register_uri_handler(server_, &cfg_uri);
     httpd_register_uri_handler(server_, &ota_uri);
     httpd_register_uri_handler(server_, &scan_r);
+    httpd_register_uri_handler(server_, &logs_get);
+    httpd_register_uri_handler(server_, &logs_post);
     httpd_register_uri_handler(server_, &ws);
 
     xTaskCreate(ws_push_task,  "ws_push",  4096, this, 2, &ws_task_handle_);
@@ -170,6 +175,26 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
     else if (strcmp(cmd_name, "led2-bright") == 0) handled_inline = handle_bright(LedManager::Target::STRIP_2);
 
     if (handled_inline) {
+        // Log color/brightness changes from the web UI
+        {
+            cJSON* rj = cJSON_GetObjectItem(body, "r");
+            cJSON* bj = cJSON_GetObjectItem(body, "brightness");
+            const char* tgt_str =
+                (strcmp(cmd_name, "led1-color") == 0 || strcmp(cmd_name, "led1-bright") == 0) ? "Ring" :
+                (strcmp(cmd_name, "led2-color") == 0 || strcmp(cmd_name, "led2-bright") == 0) ? "Base" : "Both";
+            if (rj) {  // color command
+                cJSON* gj = cJSON_GetObjectItem(body, "g");
+                cJSON* bj2 = cJSON_GetObjectItem(body, "b");
+                EventLog::log(LogCat::LIGHT_WEB, "%s color RGB(%d,%d,%d)",
+                    tgt_str,
+                    cJSON_IsNumber(rj) ? rj->valueint : 0,
+                    cJSON_IsNumber(gj) ? gj->valueint : 0,
+                    cJSON_IsNumber(bj2) ? bj2->valueint : 0);
+            } else if (bj) {  // brightness command
+                EventLog::log(LogCat::LIGHT_WEB, "%s brightness %d", tgt_str,
+                    cJSON_IsNumber(bj) ? bj->valueint : -1);
+            }
+        }
         self->save_led_config();
         cJSON_Delete(body);
         httpd_resp_set_type(req, "application/json");
@@ -426,6 +451,48 @@ esp_err_t WebServer::on_api_scan_results(httpd_req_t* req)
     return ret;
 }
 
+// ── Logs endpoints ────────────────────────────────────────────────────────────
+// GET /api/logs  — returns all log entries (newest-first) as JSON
+// POST /api/logs — {"enabled_mask": N} to set category filter
+//               — {"clear": true}     to wipe all entries
+
+esp_err_t WebServer::on_api_logs_get(httpd_req_t* req)
+{
+    char* json = EventLog::build_json(LOG_ALL_MASK);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t ret = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    return ret;
+}
+
+esp_err_t WebServer::on_api_logs_post(httpd_req_t* req)
+{
+    char buf[128] = {};
+    int  len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len > 0) {
+        cJSON* body = cJSON_Parse(buf);
+        if (body) {
+            cJSON* mask_j  = cJSON_GetObjectItem(body, "enabled_mask");
+            cJSON* clear_j = cJSON_GetObjectItem(body, "clear");
+            if (cJSON_IsNumber(mask_j)) {
+                EventLog::set_enabled_mask((uint8_t)mask_j->valueint);
+            }
+            if (cJSON_IsTrue(clear_j)) {
+                EventLog::clear();
+            }
+            cJSON_Delete(body);
+        }
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
 esp_err_t WebServer::on_ws(httpd_req_t* req)
 {
     if (req->method == HTTP_GET) {
@@ -515,7 +582,11 @@ void WebServer::dispatch_cmd(const char* cmd)
 {
     ESP_LOGI(TAG, "Executing command: %s", cmd);
 
-    if      (strcmp(cmd, "set-time")       == 0) clock_mgr_.cmd_set_time(pending_obs_hour_, pending_obs_min_);
+    if      (strcmp(cmd, "set-time")       == 0) {
+        EventLog::log(LogCat::CLOCK_SET, "Web set-time (obs %02d:%02d)",
+                      pending_obs_hour_, pending_obs_min_);
+        clock_mgr_.cmd_set_time(pending_obs_hour_, pending_obs_min_);
+    }
     else if (strcmp(cmd, "advance")        == 0) clock_mgr_.cmd_test_advance();
     else if (strcmp(cmd, "min-fwd")        == 0) clock_mgr_.cmd_test_advance();
     else if (strcmp(cmd, "min-bwd")        == 0) clock_mgr_.cmd_test_reverse();
@@ -564,6 +635,10 @@ void WebServer::dispatch_cmd(const char* cmd)
 
     // Persist LED state after any LED command (effects, brightness, next)
     if (strncmp(cmd, "led", 3) == 0) {
+        // Log LED effect changes from web UI
+        if (strstr(cmd, "color") == nullptr && strstr(cmd, "bright") == nullptr) {
+            EventLog::log(LogCat::LIGHT_WEB, "Effect: %s", cmd);
+        }
         save_led_config();
     }
 }
