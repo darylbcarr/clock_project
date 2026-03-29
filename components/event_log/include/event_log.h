@@ -18,7 +18,8 @@ enum class LogCat : uint8_t {
     _COUNT        = 6,
 };
 
-constexpr uint8_t LOG_ALL_MASK = (1u << static_cast<uint8_t>(LogCat::_COUNT)) - 1u;
+constexpr uint8_t LOG_ALL_MASK  = (1u << static_cast<uint8_t>(LogCat::_COUNT)) - 1u;
+constexpr uint8_t LOG_NONE_MASK = 0u;
 
 /** Single log entry — 64 bytes. */
 struct LogEntry {
