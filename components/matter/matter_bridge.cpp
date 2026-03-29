@@ -5,6 +5,7 @@
  */
 
 #include "matter_bridge.h"
+#include "event_log.h"
 #include <esp_log.h>
 #include <esp_matter_core.h>
 #include <app/server/Server.h>
@@ -285,6 +286,7 @@ void MatterBridge::apply(int idx)
     if (!ep_[idx].on) {
         leds_.set_brightness(tgt, 0);
         leds_.set_effect(tgt, LedManager::Effect::STATIC);
+        EventLog::log(LogCat::LIGHT_MATTER, "%s off", idx == 0 ? "Ring" : "Base");
         return;
     }
 
@@ -305,6 +307,10 @@ void MatterBridge::apply(int idx)
     static const char* mode_str[] = { "HS", "XY", "CT" };
     ESP_LOGI(TAG, "ep%d [%s] → RGB(%u,%u,%u) bri=%u",
              idx, mode_str[ep_[idx].color_mode & 0x03], r, g, b, ep_[idx].level);
+    EventLog::log(LogCat::LIGHT_MATTER,
+        "%s [%s] RGB(%u,%u,%u) bri=%u",
+        idx == 0 ? "Ring" : "Base",
+        mode_str[ep_[idx].color_mode & 0x03], r, g, b, ep_[idx].level);
     leds_.set_effect(tgt, LedManager::Effect::STATIC);
     leds_.set_color(tgt, r, g, b);
     leds_.set_brightness(tgt, ep_[idx].level);

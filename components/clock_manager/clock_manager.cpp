@@ -5,6 +5,7 @@
 
 #include "clock_manager.h"
 #include "config_store.h"
+#include "event_log.h"
 
 #include <cstring>
 #include <cmath>
@@ -156,6 +157,33 @@ void ClockManager::tick()
              t.tm_hour, t.tm_min, t.tm_sec,
              displayed_hour_, displayed_minute_);
 
+    // ── E: DST / large-drift detection ───────────────────────────────────────
+    // If the displayed position diverges from real time by more than
+    // MAX_AUTO_CORRECT_MINUTES, the sensor-based correction cannot recover.
+    // A DST transition shifts local time by exactly ±60 minutes; this check
+    // catches it on the first tick after the transition and calls cmd_set_time()
+    // to drive the hands to the correct position (same path as first-boot align).
+    if (displayed_hour_ >= 0 && displayed_minute_ >= 0) {
+        int real_min12 = (t.tm_hour % 12) * 60 + t.tm_min;
+        int disp_min12 = displayed_hour_ * 60 + displayed_minute_;
+        int dst_delta  = (real_min12 - disp_min12 + 720) % 720;
+        if (dst_delta > 360) dst_delta -= 720;  // shortest path on 12-h face
+        if (std::abs(dst_delta) > MAX_AUTO_CORRECT_MINUTES) {
+            ESP_LOGW(TAG, "DST/drift: disp=%02d:%02d  real=%02d:%02d  delta=%+d min — realigning",
+                     displayed_hour_, displayed_minute_,
+                     t.tm_hour % 12, t.tm_min, dst_delta);
+            EventLog::log(LogCat::CLOCK_STARTUP,
+                "DST/drift %+d min: disp %02d:%02d → realign",
+                dst_delta, displayed_hour_, displayed_minute_);
+            correction_pending_ = false;
+            correction_accum_   = 0;
+            past_hour_          = false;
+            xSemaphoreGive(mutex_);
+            cmd_set_time(-1, -1);
+            return;
+        }
+    }
+
     // ── A: sensor not calibrated ──────────────────────────────────────────────
     if (sensor_offset_steps_ <= 0) {
         advance_one_minute();
@@ -178,6 +206,9 @@ void ClockManager::tick()
         ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
         ESP_LOGI(TAG, "Fast correction applied: %d steps back → %02d:00",
                  correction_accum_, displayed_hour_);
+        EventLog::log(LogCat::CLOCK_SENSOR,
+            "Sensor adj (deferred) %+d steps → %02d:00",
+            correction_accum_, displayed_hour_);
         correction_pending_ = false;
         correction_accum_   = 0;
         xSemaphoreGive(mutex_);
@@ -192,6 +223,8 @@ void ClockManager::tick()
         if (correction_accum_ > MAX_AUTO_CORRECT_MINUTES * STEPS_PER_CLOCK_MINUTE) {
             ESP_LOGW(TAG, "Fast correction abandoned: accum=%d exceeded max window — "
                           "likely false sensor trigger", correction_accum_);
+            EventLog::log(LogCat::CLOCK_SENSOR,
+                "Sensor adj abandoned (accum=%d, false trigger?)", correction_accum_);
             correction_pending_ = false;
             correction_accum_   = 0;
             // Fall through to path D for a normal advance this minute.
@@ -221,6 +254,8 @@ void ClockManager::tick()
 
     if (!near_top) {
         advance_one_minute();
+        EventLog::log(LogCat::CLOCK_TICK,
+            "Tick → %02d:%02d", displayed_hour_, displayed_minute_);
         xSemaphoreGive(mutex_);
         return;
     }
@@ -256,6 +291,14 @@ void ClockManager::tick()
                 ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
                 ESP_LOGI(TAG, "On-time correction: %d steps → %02d:00",
                          overshoot, displayed_hour_);
+                if (overshoot != 0) {
+                    EventLog::log(LogCat::CLOCK_SENSOR,
+                        "Sensor adj (on-time) %+d steps → %02d:00",
+                        overshoot, displayed_hour_);
+                } else {
+                    EventLog::log(LogCat::CLOCK_TICK,
+                        "Sensor: at %02d:00 exact, no adj needed", displayed_hour_);
+                }
             } else {
                 // Defer backward correction to the :00 tick
                 correction_pending_ = true;
@@ -265,6 +308,9 @@ void ClockManager::tick()
                 ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
                 ESP_LOGI(TAG, "Fast case: slot at step %d, correction %d deferred to :00",
                          trigger_step, overshoot);
+                EventLog::log(LogCat::CLOCK_SENSOR,
+                    "Sensor: slot@step %d, defer %+d steps to :00",
+                    trigger_step, overshoot);
             }
         } else {
             // ── Slow case: :00 already passed, slot just found ────────────
@@ -279,6 +325,9 @@ void ClockManager::tick()
             past_hour_        = false;
             ESP_LOGI(TAG, "Slow correction: moved to %02d:00, will fast-forward to real time",
                      displayed_hour_);
+            EventLog::log(LogCat::CLOCK_SENSOR,
+                "Sensor adj (slow) %+d steps → %02d:00, realigning",
+                overshoot, displayed_hour_);
             // Release mutex before calling cmd_set_time() to avoid deadlock
             needs_catchup = true;
         }
@@ -293,6 +342,7 @@ void ClockManager::tick()
             past_hour_ = true;
             ESP_LOGI(TAG, "Crossed :00 without slot — slow correction mode active");
         }
+        EventLog::log(LogCat::CLOCK_TICK, "Tick → %02d:%02d", new_hour, new_min);
     }
 
     xSemaphoreGive(mutex_);
@@ -370,11 +420,17 @@ void ClockManager::on_time_synced()
             // First-time setup: hand position is unknown (stale NVS).
             // Time is valid for display purposes; motor stays put.
             ESP_LOGI(TAG, "First sync — hand alignment suppressed (first-time setup)");
+            EventLog::log(LogCat::CLOCK_STARTUP, "SNTP first sync (align suppressed)");
         } else if (displayed_hour_ >= 0 && displayed_minute_ >= 0 && task_handle_) {
             // Normal boot: advance hands from NVS-restored position to real time.
             xTaskNotify(task_handle_, 1U, eSetValueWithOverwrite);
             ESP_LOGI(TAG, "First sync — notified clock_task to align hands (displayed=%02d:%02d)",
                      displayed_hour_, displayed_minute_);
+            EventLog::log(LogCat::CLOCK_STARTUP,
+                "SNTP first sync — aligning from %02d:%02d",
+                displayed_hour_, displayed_minute_);
+        } else {
+            EventLog::log(LogCat::CLOCK_STARTUP, "SNTP first sync (pos unknown)");
         }
     } else {
         // Periodic SNTP re-sync: the system clock is already corrected automatically.
@@ -464,6 +520,8 @@ void ClockManager::cmd_set_time(int obs_hour, int obs_min)
     xSemaphoreGive(mutex_);
     ConfigStore::save_disp_position(displayed_hour_, displayed_minute_);
     ESP_LOGI(TAG, "cmd_set_time: hand set to %02d:%02d", displayed_hour_, displayed_minute_);
+    EventLog::log(LogCat::CLOCK_SET, "Set: %+d min → %02d:%02d",
+                  delta, displayed_hour_, displayed_minute_);
 }
 
 void ClockManager::cmd_set_manual_time(int hour, int minute, int second)

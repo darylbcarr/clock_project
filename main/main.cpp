@@ -67,6 +67,7 @@
 #include "webserver.h"
 #include "led_manager.h"
 #include "config_store.h"
+#include "event_log.h"
 #include "matter_bridge.h"
 #include "ota_manager.h"
 #include "esp_ota_ops.h"
@@ -545,6 +546,7 @@ extern "C" void app_main()
         }
         ESP_ERROR_CHECK(ret);
         ConfigStore::init();
+        EventLog::load_config();
     }
 
     // ── 0a. Load persisted configuration ────────────────────────────────────

@@ -15,6 +15,7 @@ idf_component_register(
         matter
         webserver
         config_store
+        event_log
         driver
         freertos
         log

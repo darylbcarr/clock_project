@@ -287,6 +287,38 @@ input[type=range]::-webkit-slider-thumb {
 .offset-ctrl { display: flex; align-items: center; gap: 8px; }
 .offset-val { font-size: 20px; font-weight: 300; min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
 
+/* ── Log category filter buttons ── */
+.log-cat-btn {
+  padding: 4px 12px; border-radius: 20px; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+  border: 1px solid currentColor;
+  background: transparent; color: var(--muted);
+  transition: background var(--tr), color var(--tr), opacity var(--tr);
+  opacity: 0.45;
+}
+.log-cat-btn.active { opacity: 1; }
+
+/* ── Log entry rows ── */
+.log-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12px; line-height: 1.4;
+}
+.log-row:last-child { border-bottom: none; }
+.log-row:hover { background: var(--surf2); }
+.log-ts {
+  font-family: monospace; font-size: 11px; color: var(--muted);
+  white-space: nowrap; flex-shrink: 0; min-width: 130px;
+}
+.log-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.log-msg {
+  color: var(--text); word-break: break-word; flex: 1;
+}
+
 /* ── Toast ── */
 #toast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px);
@@ -310,6 +342,7 @@ input[type=range]::-webkit-slider-thumb {
     <button class="nav-btn" onclick="nav('lights')">Lights</button>
     <button class="nav-btn" onclick="nav('info')">Info</button>
     <button class="nav-btn" onclick="nav('config')">Config</button>
+    <button class="nav-btn" onclick="nav('logs');refreshLogs()">Logs</button>
   </div>
   <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark">&#9788;</button>
   <div class="accent-dots">
@@ -330,6 +363,7 @@ input[type=range]::-webkit-slider-thumb {
   <button class="nav-btn" onclick="nav('lights');closeMobileMenu()">Lights</button>
   <button class="nav-btn" onclick="nav('info');closeMobileMenu()">Info</button>
   <button class="nav-btn" onclick="nav('config');closeMobileMenu()">Config</button>
+  <button class="nav-btn" onclick="nav('logs');refreshLogs();closeMobileMenu()">Logs</button>
   <div class="mob-divider"></div>
   <div class="mob-row">
     <label>Theme</label>
@@ -744,6 +778,42 @@ input[type=range]::-webkit-slider-thumb {
   </div>
 
 </div><!-- /sec-config -->
+
+<!-- ════════════════════════════════════ LOGS ═══════════════════════════════ -->
+<div id="sec-logs" class="section">
+
+  <!-- Category filter controls -->
+  <div class="card">
+    <div class="card-title">Event Logs</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">In-memory ring buffer — 200 entries, newest first. Entries cleared on reboot. Category filters persist.</p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;" id="log-cat-row">
+      <button class="log-cat-btn" data-cat="0" data-color="#22d3a0" onclick="toggleLogCat(0)">Sensor Adj</button>
+      <button class="log-cat-btn" data-cat="1" data-color="#4f8ef7" onclick="toggleLogCat(1)">Startup/Sync</button>
+      <button class="log-cat-btn" data-cat="2" data-color="#f59e0b" onclick="toggleLogCat(2)">Clock Set</button>
+      <button class="log-cat-btn" data-cat="3" data-color="#94a3b8" onclick="toggleLogCat(3)">Tick</button>
+      <button class="log-cat-btn" data-cat="4" data-color="#fb923c" onclick="toggleLogCat(4)">Light Web</button>
+      <button class="log-cat-btn" data-cat="5" data-color="#fb7185" onclick="toggleLogCat(5)">Light Matter</button>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="refreshLogs()">&#8635; Refresh</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearLogs()">&#x1F5D1; Clear</button>
+      <span id="log-count" style="font-size:12px;color:var(--muted);"></span>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:auto;cursor:pointer;">
+        <input type="checkbox" id="log-auto" checked onchange="onLogAutoChange()"> Auto-refresh (5s)
+      </label>
+    </div>
+  </div>
+
+  <!-- Log entry list -->
+  <div class="card" style="padding:0;overflow:hidden;">
+    <div id="log-list" style="max-height:65vh;overflow-y:auto;">
+      <div style="padding:16px;color:var(--muted);font-size:13px;">Open Logs tab to load entries.</div>
+    </div>
+  </div>
+
+</div><!-- /sec-logs -->
 </div><!-- /main -->
 
 <div id="toast"></div>
@@ -1367,6 +1437,110 @@ function connectWS() {
   };
   ws.onclose = () => setTimeout(connectWS, 2000);
 }
+
+// ── Logs ─────────────────────────────────────────────────────────────────────
+const LOG_COLORS = ['#22d3a0','#4f8ef7','#f59e0b','#94a3b8','#fb923c','#fb7185'];
+let logAutoTimer = null;
+
+function applyLogMask(mask) {
+  document.querySelectorAll('.log-cat-btn').forEach(btn => {
+    const cat = parseInt(btn.dataset.cat);
+    const on = !!(mask & (1 << cat));
+    const color = btn.dataset.color || '#888';
+    btn.classList.toggle('active', on);
+    btn.style.color = on ? color : 'var(--muted)';
+    btn.style.borderColor = on ? color : 'var(--muted)';
+    btn.style.background  = on ? (color + '22') : 'transparent';
+  });
+}
+
+function toggleLogCat(cat) {
+  // Read current mask from button states
+  let mask = 0;
+  document.querySelectorAll('.log-cat-btn').forEach(btn => {
+    if (btn.classList.contains('active')) mask |= (1 << parseInt(btn.dataset.cat));
+  });
+  mask ^= (1 << cat);
+  applyLogMask(mask);
+  fetch('/api/logs', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({enabled_mask: mask})
+  }).then(() => refreshLogs()).catch(() => {});
+}
+
+function refreshLogs() {
+  fetch('/api/logs')
+    .then(r => r.json())
+    .then(data => {
+      applyLogMask(data.enabled_mask);
+      renderLogs(data);
+    })
+    .catch(() => {});
+}
+
+function clearLogs() {
+  fetch('/api/logs', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({clear: true})
+  }).then(() => refreshLogs()).catch(() => {});
+}
+
+function renderLogs(data) {
+  const countEl = document.getElementById('log-count');
+  const list    = document.getElementById('log-list');
+  if (countEl) countEl.textContent = data.total + ' events in buffer';
+  if (!list) return;
+
+  if (!data.entries || data.entries.length === 0) {
+    list.innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px;">No entries match current filters.</div>';
+    return;
+  }
+
+  const html = data.entries.map(e => {
+    const color = LOG_COLORS[e.cat] || '#888';
+    const msg = e.msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<div class="log-row">` +
+      `<span class="log-ts">${e.ts_str}</span>` +
+      `<span class="log-badge" style="background:${color}22;color:${color};border:1px solid ${color}44;">${e.cat_name}</span>` +
+      `<span class="log-msg">${msg}</span>` +
+      `</div>`;
+  }).join('');
+  list.innerHTML = html;
+}
+
+function onLogAutoChange() {
+  const on = document.getElementById('log-auto').checked;
+  if (!on && logAutoTimer) { clearInterval(logAutoTimer); logAutoTimer = null; }
+  if (on && document.getElementById('sec-logs').classList.contains('active')) {
+    startLogAutoRefresh();
+  }
+}
+
+function startLogAutoRefresh() {
+  if (logAutoTimer) clearInterval(logAutoTimer);
+  logAutoTimer = setInterval(() => {
+    if (document.getElementById('sec-logs').classList.contains('active')
+        && document.getElementById('log-auto').checked) {
+      refreshLogs();
+    } else if (!document.getElementById('sec-logs').classList.contains('active')) {
+      clearInterval(logAutoTimer); logAutoTimer = null;
+    }
+  }, 5000);
+}
+
+// Kick off auto-refresh timer when logs tab is shown (refreshLogs() already
+// called by the nav button onclick; this sets up the repeating interval).
+const _origNav = nav;
+nav = function(id) {
+  _origNav(id);
+  if (id === 'logs') {
+    if (document.getElementById('log-auto').checked) startLogAutoRefresh();
+  } else {
+    if (logAutoTimer) { clearInterval(logAutoTimer); logAutoTimer = null; }
+  }
+};
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 buildColorGrid(1);
