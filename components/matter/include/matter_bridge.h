@@ -83,6 +83,7 @@ public:
      *        when Matter manages WiFi.
      */
     bool is_commissioned() const;
+    uint8_t fabric_count() const;
 
     /**
      * @brief Disable BLE advertising.

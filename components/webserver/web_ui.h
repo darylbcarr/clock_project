@@ -531,6 +531,8 @@ input[type=range]::-webkit-slider-thumb {
       <div class="info-item"><div class="info-label">Gateway</div><div class="info-val" id="inf-gw">—</div></div>
       <div class="info-item wide"><div class="info-label">Internet IP</div><div class="info-val" id="inf-eip">—</div></div>
       <div class="info-item wide"><div class="info-label">Location</div><div class="info-val" id="inf-geo">—</div></div>
+      <div class="info-item"><div class="info-label">Matter</div><div class="info-val" id="inf-matter">—</div></div>
+      <div class="info-item"><div class="info-label">Fabrics</div><div class="info-val" id="inf-matter-fabrics">—</div></div>
     </div>
   </div>
 
@@ -1351,6 +1353,10 @@ function applyData(d) {
   setText('inf-ssid', d.ssid || '—');
   setText('inf-rssi', d.rssi !== undefined ? d.rssi + ' dBm' : '—');
   setText('inf-lip', d.local_ip || '—');
+  if (d.matter !== undefined) {
+    setText('inf-matter', d.matter ? 'Yes' : 'No');
+    setText('inf-matter-fabrics', d.matter ? String(d.matter_fabrics) : '—');
+  }
   setText('inf-gw', d.gateway || '—');
   setText('inf-eip', d.external_ip || '—');
   const geo = [d.city, d.region, d.isp].filter(Boolean).join(' · ');
