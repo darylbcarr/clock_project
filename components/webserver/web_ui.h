@@ -993,7 +993,37 @@ function showSetProgress(visible) {
   }
 }
 
+let _setTimePoll = null;
+
+function _clearSetTimePoll() {
+  if (_setTimePoll) { clearInterval(_setTimePoll); _setTimePoll = null; }
+}
+
+// Poll /api/status until motor_busy clears, then hide the progress banner.
+// seenBusy: if false we dismiss after a 2 s grace period even if motor never
+// appeared busy (delta=0, time not valid, command rejected, etc.).
+function _startSetTimePoll() {
+  _clearSetTimePoll();
+  const start = Date.now();
+  let seenBusy = false;
+  _setTimePoll = setInterval(() => {
+    fetch('/api/status').then(r => r.json()).then(d => {
+      if (d.motor_busy) {
+        seenBusy = true;
+      } else if (seenBusy || (Date.now() - start) > 2000) {
+        _clearSetTimePoll();
+        const prog = document.getElementById('set-progress');
+        if (prog && prog.classList.contains('visible')) {
+          showSetProgress(false);
+          toast('Clock hands set');
+        }
+      }
+    }).catch(() => {});
+  }, 500);
+}
+
 function doCancelSet() {
+  _clearSetTimePoll();
   post('cancel-set').then(() => {
     showSetProgress(false);
     toast('Move cancelled');
@@ -1006,9 +1036,9 @@ function doSetTime() {
   const parts = val.split(':');
   const observed_hour = parseInt(parts[0], 10) % 12;
   const observed_min  = parseInt(parts[1], 10);
-  post('set-time', {observed_hour, observed_min}).then(() => {
-    showSetProgress(true);
-  });
+  showSetProgress(true);
+  post('set-time', {observed_hour, observed_min});
+  _startSetTimePoll();
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────

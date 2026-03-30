@@ -152,6 +152,13 @@ void ClockManager::tick()
         return;
     }
 
+    // Hand position unknown (e.g. a Set Time was cancelled mid-move).
+    // Don't advance until the user re-runs Set Time to re-establish position.
+    if (displayed_hour_ < 0 || displayed_minute_ < 0) {
+        xSemaphoreGive(mutex_);
+        return;
+    }
+
     struct tm t = get_local_tm();
     ESP_LOGI(TAG, "Tick — real time: %02d:%02d:%02d  disp=%02d:%02d",
              t.tm_hour, t.tm_min, t.tm_sec,
@@ -742,7 +749,14 @@ void ClockManager::cmd_test_reverse()
 void ClockManager::cmd_cancel_move()
 {
     motor_.request_cancel();
-    ESP_LOGI(TAG, "cmd_cancel_move: cancel requested");
+    // Clear the stored position so the tick task doesn't immediately re-trigger
+    // a large realignment move based on the now-stale pre-cancel position.
+    // The user must re-run Set Time to re-establish the hand position.
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    displayed_hour_   = -1;
+    displayed_minute_ = -1;
+    xSemaphoreGive(mutex_);
+    ESP_LOGI(TAG, "cmd_cancel_move: cancelled — hand position cleared");
 }
 
 void ClockManager::cmd_status()

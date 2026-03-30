@@ -107,6 +107,14 @@ private:
         uint8_t  color_mode = 0;   ///< 0=HS, 1=XY, 2=CT    (0x0008)
         uint8_t  level      = 128;
         bool     on         = true;
+
+        // HomeKit sets saturation=0 whenever brightness hits 0, wiping the
+        // colour.  Cache the last non-zero HS pair so we can restore it when
+        // brightness rises from 0 back to a non-zero value.
+        uint8_t  cached_hue = 0;
+        uint8_t  cached_sat = 0;
+        bool     has_color_cache = false;
+        uint8_t  prev_level = 128;
     };
     EpState ep_[2];   // 0 = Ring, 1 = Base
 
