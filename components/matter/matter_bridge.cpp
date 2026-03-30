@@ -337,8 +337,21 @@ esp_err_t MatterBridge::attr_cb(
         self->apply(idx);
 
     } else if (cluster_id == CLUSTER_LEVEL && attribute_id == ATTR_LEVEL_CUR) {
+        uint8_t prev = self->ep_[idx].level;
+        self->ep_[idx].prev_level = prev;
         self->ep_[idx].level = val->val.u8;
         ESP_LOGD(TAG, "ep%d Level=%u", idx, val->val.u8);
+        // HomeKit zeroes saturation when brightness hits 0; restore cached
+        // colour when brightness rises from 0 in HS mode.
+        if (prev == 0 && val->val.u8 > 0
+                && self->ep_[idx].color_mode == 0x00
+                && self->ep_[idx].saturation == 0
+                && self->ep_[idx].has_color_cache) {
+            self->ep_[idx].hue        = self->ep_[idx].cached_hue;
+            self->ep_[idx].saturation = self->ep_[idx].cached_sat;
+            ESP_LOGI(TAG, "ep%d restored cached colour H=%u S=%u after bri-from-zero",
+                     idx, self->ep_[idx].hue, self->ep_[idx].saturation);
+        }
         if (self->ep_[idx].on) self->apply(idx);
 
     } else if (cluster_id == CLUSTER_COLOR) {
@@ -352,10 +365,23 @@ esp_err_t MatterBridge::attr_cb(
         } else if (attribute_id == ATTR_HUE) {
             self->ep_[idx].hue = val->val.u8;
             ESP_LOGD(TAG, "ep%d Hue=%u", idx, val->val.u8);
+            // Keep cache in sync whenever saturation is non-zero.
+            if (self->ep_[idx].saturation > 0) {
+                self->ep_[idx].cached_hue = val->val.u8;
+                self->ep_[idx].cached_sat = self->ep_[idx].saturation;
+                self->ep_[idx].has_color_cache = true;
+            }
             if (self->ep_[idx].on) self->apply(idx);
         } else if (attribute_id == ATTR_SAT) {
             self->ep_[idx].saturation = val->val.u8;
             ESP_LOGD(TAG, "ep%d Sat=%u", idx, val->val.u8);
+            // Cache every non-zero saturation so we can restore it after a
+            // HomeKit bri=0 → bri>0 transition (which zeroes saturation).
+            if (val->val.u8 > 0) {
+                self->ep_[idx].cached_hue = self->ep_[idx].hue;
+                self->ep_[idx].cached_sat = val->val.u8;
+                self->ep_[idx].has_color_cache = true;
+            }
             if (self->ep_[idx].on) self->apply(idx);
         } else if (attribute_id == ATTR_CUR_X) {
             self->ep_[idx].color_x = val->val.u16;
