@@ -787,7 +787,7 @@ input[type=range]::-webkit-slider-thumb {
   <!-- Category filter controls -->
   <div class="card">
     <div class="card-title">Event Logs</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">In-memory ring buffer — 200 entries, newest first. Entries cleared on reboot. Category filters persist.</p>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">In-memory ring buffer — 200 entries, newest first. Category filters persist.</p>
 
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;" id="log-cat-row">
       <button class="log-cat-btn" data-cat="0" data-color="#22d3a0" onclick="toggleLogCat(0)">Sensor Adj</button>

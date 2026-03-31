@@ -3,6 +3,7 @@
 #include <ctime>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"  // portMUX_TYPE
+#include "esp_timer.h"
 
 /**
  * Log categories.  Six categories → bitmask fits in a uint8_t.
@@ -64,13 +65,22 @@ public:
     static uint8_t get_enabled_mask();
     static void    set_enabled_mask(uint8_t mask);
 
-    /** Load the saved mask from NVS.  Call once after nvs_flash_init(). */
+    /** Load the saved mask and ring buffer from NVS.  Call once after nvs_flash_init(). */
     static void load_config();
 
+    /**
+     * Flush the ring buffer to NVS immediately.
+     * No-op if nothing has been logged since the last save.
+     * Called automatically by the inactivity timer and the shutdown handler.
+     */
+    static void save();
+
 private:
-    static LogEntry      s_buf_[CAPACITY];
-    static int           s_head_;    ///< Next write slot (ring index)
-    static int           s_count_;   ///< Entries present (capped at CAPACITY)
-    static uint8_t       s_enabled_; ///< Bitmask of active categories
-    static portMUX_TYPE  s_mux_;
+    static LogEntry           s_buf_[CAPACITY];
+    static int                s_head_;         ///< Next write slot (ring index)
+    static int                s_count_;        ///< Entries present (capped at CAPACITY)
+    static uint8_t            s_enabled_;      ///< Bitmask of active categories
+    static bool               s_dirty_;        ///< True if unsaved entries exist
+    static esp_timer_handle_t s_flush_timer_;  ///< One-shot inactivity flush timer
+    static portMUX_TYPE       s_mux_;
 };
