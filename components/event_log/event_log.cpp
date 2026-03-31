@@ -1,23 +1,38 @@
 #include "event_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#include "esp_timer.h"
+#include "esp_system.h"
+#include "esp_log.h"
 #include "cJSON.h"
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
 #include <ctime>
 
+static const char* TAG = "event_log";
+
 // ── Static storage ────────────────────────────────────────────────────────────
 
-LogEntry     EventLog::s_buf_[EventLog::CAPACITY];
-int          EventLog::s_head_    = 0;
-int          EventLog::s_count_   = 0;
-uint8_t      EventLog::s_enabled_ = LOG_NONE_MASK;
-portMUX_TYPE EventLog::s_mux_     = portMUX_INITIALIZER_UNLOCKED;
+LogEntry           EventLog::s_buf_[EventLog::CAPACITY];
+int                EventLog::s_head_        = 0;
+int                EventLog::s_count_       = 0;
+uint8_t            EventLog::s_enabled_     = LOG_NONE_MASK;
+bool               EventLog::s_dirty_       = false;
+esp_timer_handle_t EventLog::s_flush_timer_ = nullptr;
+portMUX_TYPE       EventLog::s_mux_         = portMUX_INITIALIZER_UNLOCKED;
 
-static constexpr const char* NVS_NS  = "clk_cfg";
-static constexpr const char* NVS_KEY = "log_mask";
+static constexpr const char*  NVS_NS       = "clk_cfg";
+static constexpr const char*  NVS_KEY      = "log_mask";
+static constexpr const char*  NVS_KEY_BUF  = "log_buf";
+static constexpr uint64_t     FLUSH_US     = 10ULL * 60 * 1'000'000; // 10 min
+
+// Blob persisted to NVS — plain POD so nvs_set_blob is safe.
+struct LogBufBlob {
+    int32_t  head;
+    int32_t  count;
+    LogEntry entries[EventLog::CAPACITY];
+};
 
 // Human-readable category names (must match LogCat order).
 static const char* const CAT_NAMES[] = {
@@ -52,6 +67,18 @@ void EventLog::log(LogCat cat, const char* fmt, ...)
     s_head_ = (s_head_ + 1) % CAPACITY;
     if (s_count_ < CAPACITY) s_count_++;
     portEXIT_CRITICAL(&s_mux_);
+
+    // Start the flush timer on the first new entry after a save.
+    // Do NOT restart it on every call — the clock ticks every minute and
+    // would prevent the timer from ever firing.  Instead let it run to
+    // completion (10 min after the first dirty entry) so NVS is written
+    // at most once per flush window.  esp_timer is not ISR-safe; guard.
+    if (s_flush_timer_ && !xPortInIsrContext()) {
+        s_dirty_ = true;
+        if (!esp_timer_is_active(s_flush_timer_)) {
+            esp_timer_start_once(s_flush_timer_, FLUSH_US);
+        }
+    }
 }
 
 // ── build_json ────────────────────────────────────────────────────────────────
@@ -134,6 +161,9 @@ void EventLog::clear()
     s_head_  = 0;
     s_count_ = 0;
     portEXIT_CRITICAL(&s_mux_);
+
+    s_dirty_ = true;
+    save();  // persist the empty state immediately so cleared entries can't reappear
 }
 
 int EventLog::count()
@@ -167,9 +197,75 @@ void EventLog::load_config()
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        // Restore enabled mask.
         uint8_t v = LOG_NONE_MASK;
         nvs_get_u8(h, NVS_KEY, &v);
         s_enabled_ = v & LOG_ALL_MASK;
+
+        // Restore ring buffer.
+        size_t blob_size = sizeof(LogBufBlob);
+        LogBufBlob* blob = static_cast<LogBufBlob*>(malloc(blob_size));
+        if (blob) {
+            esp_err_t err = nvs_get_blob(h, NVS_KEY_BUF, blob, &blob_size);
+            if (err == ESP_OK
+                    && blob_size == sizeof(LogBufBlob)
+                    && blob->count >= 0 && blob->count <= CAPACITY
+                    && blob->head  >= 0 && blob->head  <  CAPACITY) {
+                portENTER_CRITICAL(&s_mux_);
+                s_head_  = blob->head;
+                s_count_ = blob->count;
+                memcpy(s_buf_, blob->entries, sizeof(s_buf_));
+                portEXIT_CRITICAL(&s_mux_);
+                ESP_LOGI(TAG, "Restored %" PRId32 " log entries from NVS", blob->count);
+            } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+                ESP_LOGI(TAG, "No saved log buffer in NVS (first boot or cleared)");
+            } else {
+                ESP_LOGW(TAG, "Failed to restore log buffer: err=0x%x blob_size=%u",
+                         err, (unsigned)blob_size);
+            }
+            free(blob);
+        }
         nvs_close(h);
     }
+
+    // Create the inactivity flush timer (one-shot, restarted on each log() call).
+    esp_timer_create_args_t args = {};
+    args.callback = [](void*) { EventLog::save(); };
+    args.name     = "evlog_flush";
+    esp_timer_create(&args, &s_flush_timer_);
+
+    // Flush on clean shutdown / OTA reboot.
+    esp_register_shutdown_handler([]() { EventLog::save(); });
+}
+
+// ── save ──────────────────────────────────────────────────────────────────────
+
+void EventLog::save()
+{
+    if (!s_dirty_) return;
+
+    LogBufBlob* blob = static_cast<LogBufBlob*>(malloc(sizeof(LogBufBlob)));
+    if (!blob) return;
+
+    portENTER_CRITICAL(&s_mux_);
+    blob->head  = s_head_;
+    blob->count = s_count_;
+    memcpy(blob->entries, s_buf_, sizeof(s_buf_));
+    portEXIT_CRITICAL(&s_mux_);
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        esp_err_t err = nvs_set_blob(h, NVS_KEY_BUF, blob, sizeof(LogBufBlob));
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+        if (err == ESP_OK) {
+            s_dirty_ = false;
+            ESP_LOGI(TAG, "Flushed %" PRId32 " log entries to NVS", blob->count);
+        } else {
+            ESP_LOGE(TAG, "Failed to flush log to NVS: 0x%x", err);
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for log flush");
+    }
+    free(blob);
 }

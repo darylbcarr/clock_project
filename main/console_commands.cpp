@@ -19,6 +19,7 @@
 #include "config_store.h"
 #include "esp_wifi.h"
 #include "ota_manager.h"
+#include "event_log.h"
 
 static const char* TAG = "console";
 
@@ -121,6 +122,8 @@ static void do_help()
         "  matter-pair             Reopen BLE commissioning window (fast advertising)\r\n"
         "  check-ota               Check GitHub for a firmware update now\r\n"
         "  clear-wifi              Erase stored WiFi credentials and restart\r\n"
+        "  log save                Flush event log to NVS now\r\n"
+        "  restart                 Graceful restart (flushes log via shutdown handler)\r\n"
         "  help                    Show this list\r\n"
     );
 }
@@ -357,6 +360,21 @@ static void dispatch(char* line)
         esp_wifi_set_config(WIFI_IF_STA, &wcfg);
         uart_puts("WiFi credentials cleared. Restarting...\r\n");
         vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+        return;
+    }
+    if (strcmp(cmd, "log") == 0) {
+        if (argc >= 2 && strcmp(argv[1], "save") == 0) {
+            EventLog::save();
+            uart_puts("Event log flushed to NVS.\r\n");
+        } else {
+            uart_puts("Usage: log save\r\n");
+        }
+        return;
+    }
+    if (strcmp(cmd, "restart") == 0) {
+        uart_puts("Restarting (shutdown handlers will flush log)...\r\n");
+        vTaskDelay(pdMS_TO_TICKS(100));
         esp_restart();
         return;
     }
