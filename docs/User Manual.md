@@ -1,4 +1,4 @@
-# Analog Clock — User Manual
+# Floating Clock — User Manual
 
 This document covers day-to-day use of the analog clock via the web interface and via Matter smart-home integration (Alexa, Apple Home, Google Home).
 
@@ -13,12 +13,12 @@ After the clock connects to WiFi, it is accessible by either its IP address or i
 On the clock display, navigate to:
 > Main Menu → **Status** → **Network**
 
-The screen shows the local IP address (e.g. `192.168.50.42`) and the mDNS hostname (e.g. `clock_a1b2`).
+The screen shows the local IP address (e.g. `192.168.0.42`) and the mDNS hostname (e.g. `clock_a1b2`).
 
-**To open the web interface**, enter one of these in a browser:
+**To open the web interface**, enter one of these in a browser (note these are examples, your will be different):
 
 ```
-http://192.168.50.42
+http://192.168.0.42
 http://clock_a1b2.local
 ```
 
