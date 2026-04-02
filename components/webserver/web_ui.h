@@ -529,8 +529,8 @@ input[type=range]::-webkit-slider-thumb {
       <div class="info-item"><div class="info-label">Signal (RSSI)</div><div class="info-val" id="inf-rssi">—</div></div>
       <div class="info-item"><div class="info-label">Local IP</div><div class="info-val" id="inf-lip">—</div></div>
       <div class="info-item"><div class="info-label">Gateway</div><div class="info-val" id="inf-gw">—</div></div>
-      <div class="info-item wide"><div class="info-label">Internet IP</div><div class="info-val" id="inf-eip">—</div></div>
-      <div class="info-item wide"><div class="info-label">Location</div><div class="info-val" id="inf-geo">—</div></div>
+      <div class="info-item"><div class="info-label">Internet IP</div><div class="info-val" id="inf-eip">—</div></div>
+      <div class="info-item"><div class="info-label">Location</div><div class="info-val" id="inf-geo">—</div></div>
       <div class="info-item"><div class="info-label">Matter</div><div class="info-val" id="inf-matter">—</div></div>
       <div class="info-item"><div class="info-label">Fabrics</div><div class="info-val" id="inf-matter-fabrics">—</div></div>
     </div>

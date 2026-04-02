@@ -41,10 +41,11 @@ WebServer::~WebServer()
 void WebServer::start()
 {
     httpd_config_t cfg   = HTTPD_DEFAULT_CONFIG();
-    cfg.stack_size       = 8192;
-    cfg.max_open_sockets = 7;
-    cfg.lru_purge_enable = true;
-    cfg.uri_match_fn     = httpd_uri_match_wildcard;
+    cfg.stack_size        = 8192;
+    cfg.max_open_sockets  = 7;
+    cfg.max_uri_handlers  = 12;  // default is 8; we register 9 handlers (root+6 API+2 logs+ws)
+    cfg.lru_purge_enable  = true;
+    cfg.uri_match_fn      = httpd_uri_match_wildcard;
     cfg.send_wait_timeout = 5;  // keep default; WS dead-socket cleanup uses sess_trigger_close
 
     if (httpd_start(&server_, &cfg) != ESP_OK) {
