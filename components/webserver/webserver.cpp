@@ -284,7 +284,7 @@ esp_err_t WebServer::on_api_cfg(httpd_req_t* req)
     }
     if ((j = cJSON_GetObjectItem(body, "step_delay_us")) && cJSON_IsNumber(j)) {
         uint32_t d = (uint32_t)j->valueint;
-        if (d >= 900u) {
+        if (d >= 500u) {
             cc.step_delay_us = d;
             self->clock_mgr_.set_step_delay_us(d);
             clock_changed = true;

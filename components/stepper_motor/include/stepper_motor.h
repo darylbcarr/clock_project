@@ -42,11 +42,11 @@ static constexpr int HALF_STEP_PHASES = 8;
 static constexpr int STEPS_PER_REV = 4096;
 
 /// Default inter-step delay in microseconds.
-/// ~2 ms/step → ~8 s/rev.  Slower = quieter and more torque.
-static constexpr uint32_t DEFAULT_STEP_DELAY_US = 2000;
+/// ~1 ms/step → ~4 s/rev.  Slower = quieter and more torque.
+static constexpr uint32_t DEFAULT_STEP_DELAY_US = 1000;
 
 /// Minimum safe delay (fastest useful speed)
-static constexpr uint32_t MIN_STEP_DELAY_US = 900;
+static constexpr uint32_t MIN_STEP_DELAY_US = 500;
 
 // ── Direction ────────────────────────────────────────────────────────────────
 enum class StepDirection : int8_t {

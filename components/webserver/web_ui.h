@@ -681,18 +681,18 @@ input[type=range]::-webkit-slider-thumb {
   <div class="card">
     <div class="card-title">Motor Speed</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-      Lower delay = faster &amp; noisier. Higher = slower &amp; quieter. Default: 2000 µs/step.
+      Lower delay = faster &amp; noisier. Higher = slower &amp; quieter. Default: 1000 µs/step.
     </p>
     <div class="slider-row">
       <label>Step delay</label>
-      <input type="range" id="cfg-step-delay" min="900" max="3000" value="2000"
-             oninput="updateSpeedLabel(this.value)">
+      <input type="range" id="cfg-step-delay" min="500" max="3000" value="1000"
+             oninput="updateSpeedLabel(this.value)"
+             onchange="saveSpeed()">
     </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
-      <span id="cfg-step-label">2000 µs/step</span>
+      <span id="cfg-step-label">1000 µs/step</span>
       &nbsp;·&nbsp; <span id="cfg-step-hz">—</span>
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="saveSpeed()">Save Speed</button>
   </div>
 
   <!-- Timezone Override -->
@@ -1234,7 +1234,7 @@ function updateSpeedLabel(v) {
 }
 function saveSpeed() {
   const v = parseInt(document.getElementById('cfg-step-delay').value);
-  postCfg({step_delay_us: v}).then(() => toast('Motor speed saved'));
+  postCfg({step_delay_us: v});
 }
 
 function saveTz() {
