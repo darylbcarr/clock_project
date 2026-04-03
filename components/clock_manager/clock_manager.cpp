@@ -170,24 +170,34 @@ void ClockManager::tick()
     // A DST transition shifts local time by exactly ±60 minutes; this check
     // catches it on the first tick after the transition and calls cmd_set_time()
     // to drive the hands to the correct position (same path as first-boot align).
+    //
+    // Exception: if suppress_align_ is still set (first-time setup / BLE
+    // commissioning), skip the large move on this tick and clear the flag.
+    // The user will align the hands via the web UI after commissioning.
     if (displayed_hour_ >= 0 && displayed_minute_ >= 0) {
         int real_min12 = (t.tm_hour % 12) * 60 + t.tm_min;
         int disp_min12 = displayed_hour_ * 60 + displayed_minute_;
         int dst_delta  = (real_min12 - disp_min12 + 720) % 720;
         if (dst_delta > 360) dst_delta -= 720;  // shortest path on 12-h face
         if (std::abs(dst_delta) > MAX_AUTO_CORRECT_MINUTES) {
-            ESP_LOGW(TAG, "DST/drift: disp=%02d:%02d  real=%02d:%02d  delta=%+d min — realigning",
-                     displayed_hour_, displayed_minute_,
-                     t.tm_hour % 12, t.tm_min, dst_delta);
-            EventLog::log(LogCat::CLOCK_STARTUP,
-                "DST/drift %+d min: disp %02d:%02d → realign",
-                dst_delta, displayed_hour_, displayed_minute_);
-            correction_pending_ = false;
-            correction_accum_   = 0;
-            past_hour_          = false;
-            xSemaphoreGive(mutex_);
-            cmd_set_time(-1, -1);
-            return;
+            if (suppress_align_) {
+                ESP_LOGW(TAG, "DST/drift: delta=%+d min suppressed during commissioning — "
+                         "use web UI to align hands after setup", dst_delta);
+                suppress_align_ = false;
+            } else {
+                ESP_LOGW(TAG, "DST/drift: disp=%02d:%02d  real=%02d:%02d  delta=%+d min — realigning",
+                         displayed_hour_, displayed_minute_,
+                         t.tm_hour % 12, t.tm_min, dst_delta);
+                EventLog::log(LogCat::CLOCK_STARTUP,
+                    "DST/drift %+d min: disp %02d:%02d → realign",
+                    dst_delta, displayed_hour_, displayed_minute_);
+                correction_pending_ = false;
+                correction_accum_   = 0;
+                past_hour_          = false;
+                xSemaphoreGive(mutex_);
+                cmd_set_time(-1, -1);
+                return;
+            }
         }
     }
 

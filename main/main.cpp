@@ -767,6 +767,7 @@ extern "C" void app_main()
                     // skips first-time setup without relying on CHIP_KVS state.
                     netCfg.matter_commissioned = true;
                     ConfigStore::save(netCfg);
+                    did_first_time_setup = true;   // prevent OTA from starting during CASE session
                     setup_done = true;
                 }
                 // else: loop back to first_time_setup choice screen

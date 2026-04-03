@@ -59,8 +59,10 @@ CONFIG_USE_MINIMAL_MDNS=n
 # BLE commissioning consumes ~70 KB of heap.  Reducing WiFi static RX buffers
 # and NimBLE MSYS pool sizes recovers ~12 KB for Matter packet buffer allocation.
 #
-# WiFi static RX buffers: each is 1600 B.  6 is sufficient for normal STA use.
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+# WiFi static RX buffers: each is 1600 B.  4 is sufficient for normal STA use
+# and recovers 3.2 KB vs the default of 6 — critical during BLE+WiFi coex when
+# heap drops to only ~5 KB and CHIP CASE session needs packet buffer space.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
 #
 # NimBLE MSYS pools: reduced conservatively to recover heap without impacting
 # BLE commissioning throughput.

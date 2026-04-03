@@ -68,6 +68,7 @@ html, body {
   z-index: 100;
 }
 #topbar .logo { font-weight: 700; color: var(--a); margin-right: auto; font-size: 15px; letter-spacing: .5px; }
+#nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-btn {
   padding: 6px 14px; border-radius: var(--radius-sm);
   border: none; background: transparent; color: var(--dim);
@@ -120,9 +121,10 @@ html, body {
 input[type=time] { color-scheme: dark; }
 html[data-theme="light"] input[type=time] { color-scheme: light; }
 
-/* ── Responsive: collapse nav on small screens ── */
-@media (max-width: 700px) {
-  #nav-links, #theme-toggle, #topbar .accent-dots { display: none; }
+/* ── Responsive: compact nav + hamburger (for themes) below 600 px ── */
+@media (max-width: 600px) {
+  #theme-toggle, #topbar .accent-dots { display: none; }
+  .nav-btn { padding: 5px 8px; font-size: 12px; }
   #hamburger { display: flex; }
 }
 
@@ -308,7 +310,7 @@ input[type=range]::-webkit-slider-thumb {
 .log-row:hover { background: var(--surf2); }
 .log-ts {
   font-family: monospace; font-size: 11px; color: var(--muted);
-  white-space: nowrap; flex-shrink: 0; min-width: 130px;
+  white-space: nowrap; flex-shrink: 0; min-width: 100px;
 }
 .log-badge {
   display: inline-block; padding: 1px 7px; border-radius: 10px;
@@ -337,7 +339,7 @@ input[type=range]::-webkit-slider-thumb {
 <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
 <div id="topbar">
   <span class="logo">&#9201; Clock</span>
-  <div id="nav-links" style="display:flex;align-items:center;gap:4px;">
+  <div id="nav-links">
     <button class="nav-btn active" onclick="nav('clock')">Clock</button>
     <button class="nav-btn" onclick="nav('lights')">Lights</button>
     <button class="nav-btn" onclick="nav('info')">Info</button>
@@ -359,12 +361,6 @@ input[type=range]::-webkit-slider-thumb {
 
 <!-- ── Mobile dropdown ──────────────────────────────────────────────────── -->
 <div id="mobile-menu">
-  <button class="nav-btn active" onclick="nav('clock');closeMobileMenu()">Clock</button>
-  <button class="nav-btn" onclick="nav('lights');closeMobileMenu()">Lights</button>
-  <button class="nav-btn" onclick="nav('info');closeMobileMenu()">Info</button>
-  <button class="nav-btn" onclick="nav('config');closeMobileMenu()">Config</button>
-  <button class="nav-btn" onclick="nav('logs');refreshLogs();closeMobileMenu()">Logs</button>
-  <div class="mob-divider"></div>
   <div class="mob-row">
     <label>Theme</label>
     <button id="theme-toggle-mob" onclick="toggleTheme()" title="Toggle light/dark" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--surf2);color:var(--dim);cursor:pointer;font-size:16px;">&#9788;</button>
@@ -559,18 +555,18 @@ input[type=range]::-webkit-slider-thumb {
     <table class="pin-table">
       <thead><tr><th>GPIO</th><th>Function</th></tr></thead>
       <tbody>
-        <tr><td class="pin-num">6</td><td>Stepper IN4</td></tr>
+        <tr><td class="pin-num">16</td><td>Stepper IN1</td></tr>
+        <tr><td class="pin-num">15</td><td>Stepper IN2</td></tr>
         <tr><td class="pin-num">7</td><td>Stepper IN3</td></tr>
+        <tr><td class="pin-num">6</td><td>Stepper IN4</td></tr>
         <tr><td class="pin-num">8</td><td>I2C SDA (Display + Encoder)</td></tr>
         <tr><td class="pin-num">9</td><td>I2C SCL (Display + Encoder)</td></tr>
         <tr><td class="pin-num">10</td><td>Button A (Menu Prev)</td></tr>
         <tr><td class="pin-num">11</td><td>Button B (Menu Next)</td></tr>
         <tr><td class="pin-num">13</td><td>Sensor LED (output)</td></tr>
         <tr><td class="pin-num">14</td><td>Sensor LDR (ADC input)</td></tr>
-        <tr><td class="pin-num">15</td><td>Stepper IN2</td></tr>
-        <tr><td class="pin-num">16</td><td>Stepper IN1</td></tr>
-        <tr><td class="pin-num">LED1</td><td>WS2812B Ring Data</td></tr>
-        <tr><td class="pin-num">LED2</td><td>WS2812B Base Data</td></tr>
+        <tr><td class="pin-num">1</td><td>WS2812B Ring Data</td></tr>
+        <tr><td class="pin-num">2</td><td>WS2812B Base Data</td></tr>
       </tbody>
     </table>
   </div>
@@ -1339,6 +1335,10 @@ function applyData(d) {
     document.getElementById('ota-update-btn').style.display = 'none';
   } else if (d.ota_checking) {
     setText('ota-status', 'Checking...');
+  } else if (d.ota_latest !== undefined && !d.ota_checking) {
+    // Check completed but no version returned (e.g. low heap or network error)
+    setText('ota-status', 'Check failed — try again');
+    document.getElementById('ota-update-btn').style.display = 'none';
   }
   if (d.ota_auto !== undefined) {
     document.getElementById('ota-auto-on')?.classList.toggle('active', d.ota_auto);

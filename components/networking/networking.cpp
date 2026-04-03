@@ -620,13 +620,18 @@ void Networking::do_geolocation()
     static constexpr int MAX_ATTEMPTS = 1 + 3;
 
     // Wait for heap to recover before making any HTTP request.
-    // During BLE commissioning heap can drop to tens of bytes; plain HTTP needs
-    // ~8 KB.  60 KB is well above the danger zone and below the ~81 KB stable
-    // Matter-mode heap, so this check passes immediately post-commissioning.
-    static constexpr size_t HEAP_MIN_BYTES = 60 * 1024;
-    for (int waited = 0; esp_get_free_heap_size() < HEAP_MIN_BYTES && waited < 30; ++waited) {
-        ESP_LOGW(TAG, "Geolocation: low heap (%lu B) — waiting 1s",
-                 (unsigned long)esp_get_free_heap_size());
+    // During BLE commissioning heap can stay very low for the full duration of
+    // the commissioning window (~15 min) because NimBLE advertising keeps
+    // running.  Once commissioning completes (or the window expires) BLE shuts
+    // down and heap returns to ~81 KB.  We wait up to 20 minutes, logging every
+    // 30 s so the console isn't flooded.
+    static constexpr size_t HEAP_MIN_BYTES    = 60 * 1024;
+    static constexpr int    HEAP_WAIT_MAX_S   = 20 * 60;
+    for (int waited = 0; esp_get_free_heap_size() < HEAP_MIN_BYTES && waited < HEAP_WAIT_MAX_S; ++waited) {
+        if (waited % 30 == 0) {
+            ESP_LOGW(TAG, "Geolocation: low heap (%lu B) — waiting for BLE to release",
+                     (unsigned long)esp_get_free_heap_size());
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
@@ -641,7 +646,20 @@ void Networking::do_geolocation()
         }
         ESP_LOGW(TAG, "Geolocation attempt %d/%d failed", i + 1, MAX_ATTEMPTS);
     }
-    ESP_LOGE(TAG, "Geolocation failed after all retries — timezone will remain UTC");
+
+    // All short-interval retries failed — heap likely still low from BLE.
+    // Keep retrying every 5 minutes until success; heap will recover once the
+    // BLE commissioning window closes or the device reboots after commissioning.
+    ESP_LOGW(TAG, "Geolocation failed — will retry every 5 min until successful");
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5 * 60 * 1000));
+        ESP_LOGI(TAG, "Geolocation: retrying (heap=%lu B)",
+                 (unsigned long)esp_get_free_heap_size());
+        if (fetch_geolocation()) {
+            return;
+        }
+        ESP_LOGW(TAG, "Geolocation: retry failed — will try again in 5 min");
+    }
 }
 
 bool Networking::fetch_geolocation()
