@@ -13,11 +13,14 @@
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
+#include <crypto/CHIPCryptoPAL.h>
+#include <lib/core/DataModelTypes.h>
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 #include "esp_wifi.h"
+#include "esp_random.h"
 #include "host/ble_gap.h"
 
 // ── Cluster and attribute ID constants ────────────────────────────────────────
@@ -517,6 +520,75 @@ esp_err_t MatterBridge::open_commissioning_window()
     ESP_LOGI(TAG, "BLE commissioning window reopened");
     ESP_LOGI(TAG, "  PIN:  %lu   Disc: %u   Code: %s",
              (unsigned long)info.pin_code, info.discriminator, manual_code_.c_str());
+    return ESP_OK;
+}
+
+// ── open_enhanced_commissioning_window ────────────────────────────────────────
+
+esp_err_t MatterBridge::open_enhanced_commissioning_window(EcwInfo& out_info)
+{
+    using namespace chip;
+    using namespace chip::Crypto;
+
+    // ── Generate a random valid setup PIN ─────────────────────────────────────
+    // Matter spec: PIN must be 1–99999998, excluding all-same-digit sequences.
+    static const uint32_t kForbidden[] = {
+        11111111, 22222222, 33333333, 44444444, 55555555,
+        66666666, 77777777, 88888888, 99999999
+    };
+    uint32_t pin = 0;
+    do {
+        // Use hardware RNG; restrict to [10000000, 99999998] for 8 visible digits.
+        pin = 10000000 + (esp_random() % 89999999u);
+        bool forbidden = false;
+        for (uint32_t f : kForbidden) {
+            if (pin == f) { forbidden = true; break; }
+        }
+        if (!forbidden) break;
+    } while (true);
+
+    // ── Random 16-byte salt ───────────────────────────────────────────────────
+    uint8_t salt[kSpake2p_Min_PBKDF_Salt_Length];
+    esp_fill_random(salt, sizeof(salt));
+
+    // ── Derive SPAKE2+ verifier from PIN + salt ───────────────────────────────
+    static constexpr uint32_t kIterations = 10000;
+    Spake2pVerifier verifier;
+    CHIP_ERROR err = verifier.Generate(kIterations, ByteSpan(salt, sizeof(salt)), pin);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "ECW: Spake2pVerifier::Generate failed: %" CHIP_ERROR_FORMAT, err.Format());
+        return ESP_FAIL;
+    }
+
+    // ── Use device discriminator ──────────────────────────────────────────────
+    auto info = get_commissioning_info();
+    uint16_t discriminator = info.discriminator;
+
+    // ── Open the Enhanced Commissioning Window ────────────────────────────────
+    static constexpr uint32_t kTimeoutS = 180;  // 3 minutes
+    auto& mgr = Server::GetInstance().GetCommissioningWindowManager();
+    err = mgr.OpenEnhancedCommissioningWindow(
+        System::Clock::Seconds32(kTimeoutS),
+        discriminator,
+        verifier,
+        kIterations,
+        ByteSpan(salt, sizeof(salt)),
+        kUndefinedFabricIndex,
+        VendorId::NotSpecified);
+
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "ECW: OpenEnhancedCommissioningWindow failed: %" CHIP_ERROR_FORMAT, err.Format());
+        return ESP_FAIL;
+    }
+
+    out_info.pin           = pin;
+    out_info.discriminator = discriminator;
+    out_info.timeout_s     = kTimeoutS;
+
+    ESP_LOGI(TAG, "Enhanced commissioning window open — PIN: %08lu  disc: %u  timeout: %lus",
+             (unsigned long)pin, (unsigned)discriminator, (unsigned long)kTimeoutS);
+    EventLog::log(LogCat::CLOCK_STARTUP, "ECW opened: PIN %08lu", (unsigned long)pin);
+
     return ESP_OK;
 }
 

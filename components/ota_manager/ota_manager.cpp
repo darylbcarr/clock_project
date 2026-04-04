@@ -72,10 +72,12 @@ void OtaManager::set_auto_update(bool en)
 
 // ── Public: start background task ─────────────────────────────────────────────
 
-void OtaManager::start(Display& display, std::function<bool()> is_connected_fn)
+void OtaManager::start(Display& display, std::function<bool()> is_connected_fn,
+                       std::function<void()> wake_fn)
 {
     display_         = &display;
     is_connected_fn_ = is_connected_fn;
+    wake_fn_         = wake_fn;
     action_queue_    = xQueueCreate(1, sizeof(TaskAction));
     xTaskCreate(ota_task, "ota_check", 12288, this, 2, nullptr);
     ESP_LOGI(TAG, "OTA task started  (running v%s)", running_version());
@@ -240,6 +242,7 @@ esp_err_t OtaManager::do_check_and_update()
     // ── New version available — show on display and download ──────────────────
     ESP_LOGI(TAG, "Update available: v%s → v%s", running_version(), new_ver);
 
+    if (wake_fn_) wake_fn_();   // un-blank OLED before writing to it
     if (display_) {
         char line[80];
         display_->clear();

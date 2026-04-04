@@ -437,8 +437,7 @@ input[type=range]::-webkit-slider-thumb {
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <span style="font-size:12px;font-weight:600;color:var(--dim);">APPLY TO</span>
       <div class="dir-toggle">
-        <button class="dir-opt active" id="tgt-ring" onclick="setLightTarget(1)">Ring</button>
-        <button class="dir-opt"        id="tgt-base" onclick="setLightTarget(2)">Base</button>
+        <button class="dir-opt active" id="tgt-each" onclick="setLightTarget(1)">Each</button>
         <button class="dir-opt"        id="tgt-both" onclick="setLightTarget(0)">Both</button>
       </div>
     </div>
@@ -747,6 +746,49 @@ input[type=range]::-webkit-slider-thumb {
     </div>
   </div>
 
+  <!-- Smart Home Platforms (Matter multi-admin) -->
+  <div class="card" id="cfg-matter-card" style="display:none;">
+    <div class="card-title">Smart Home Platforms</div>
+    <div class="info-grid" style="margin-bottom:12px;">
+      <div class="info-item">
+        <div class="info-label">Paired Platforms</div>
+        <div class="info-val" id="cfg-matter-fabrics">—</div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Add this clock to a second smart-home platform (e.g. pair with both Alexa
+      and Apple Home). A one-time PIN will be generated — enter it in your
+      platform's app within 3 minutes.
+    </p>
+
+    <!-- idle state -->
+    <div id="ecw-idle">
+      <button class="btn btn-secondary btn-sm" onclick="openEcw()">Pair with Another Platform</button>
+    </div>
+
+    <!-- active state: PIN + countdown -->
+    <div id="ecw-active" style="display:none;">
+      <div style="background:var(--surf2);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:10px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">SETUP PIN</div>
+        <div id="ecw-pin" style="font-size:28px;font-weight:700;font-family:monospace;letter-spacing:4px;color:var(--a);">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">
+          Expires in <span id="ecw-countdown" style="color:var(--text);font-weight:600;">3:00</span>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+        Open your smart-home app, add a new device, and enter the PIN above when prompted.
+        The device is discoverable on your local network via mDNS.
+      </p>
+      <button class="btn btn-secondary btn-sm" onclick="cancelEcw()">Cancel</button>
+    </div>
+
+    <!-- expired state -->
+    <div id="ecw-expired" style="display:none;">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Window expired. Try again if needed.</p>
+      <button class="btn btn-secondary btn-sm" onclick="openEcw()">Try Again</button>
+    </div>
+  </div>
+
   <!-- Firmware Update -->
   <div class="card">
     <div class="card-title">Firmware Update</div>
@@ -978,6 +1020,49 @@ function setAutoUpdate(val) {
   });
 }
 
+// ── Matter Enhanced Commissioning Window ─────────────────────────────────────
+let ecwTimer = null;
+
+function openEcw() {
+  fetch('/api/matter/ecw', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) { toast(d.msg || 'Failed to open commissioning window', 'err'); return; }
+      setText('ecw-pin', d.pin);
+      document.getElementById('ecw-idle').style.display    = 'none';
+      document.getElementById('ecw-expired').style.display = 'none';
+      document.getElementById('ecw-active').style.display  = '';
+      startEcwCountdown(d.timeout_s || 180);
+    })
+    .catch(() => toast('Request failed', 'err'));
+}
+
+function cancelEcw() {
+  clearInterval(ecwTimer);
+  ecwTimer = null;
+  document.getElementById('ecw-active').style.display  = 'none';
+  document.getElementById('ecw-idle').style.display    = '';
+}
+
+function startEcwCountdown(seconds) {
+  let remaining = seconds;
+  clearInterval(ecwTimer);
+  function tick() {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    setText('ecw-countdown', m + ':' + String(s).padStart(2, '0'));
+    if (remaining <= 0) {
+      clearInterval(ecwTimer);
+      ecwTimer = null;
+      document.getElementById('ecw-active').style.display  = 'none';
+      document.getElementById('ecw-expired').style.display = '';
+    }
+    remaining--;
+  }
+  tick();
+  ecwTimer = setInterval(tick, 1000);
+}
+
 // ── Clock commands ───────────────────────────────────────────────────────────
 function showSetProgress(visible) {
   const prog = document.getElementById('set-progress');
@@ -1040,12 +1125,11 @@ function doSetTime() {
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────
-// lightTarget: 1=Ring, 2=Base, 0=Both
+// lightTarget: 1=Each (per-strip independent), 0=Both
 let lightTarget = 1;
 function setLightTarget(t) {
   lightTarget = t;
-  document.getElementById('tgt-ring').classList.toggle('active', t === 1);
-  document.getElementById('tgt-base').classList.toggle('active', t === 2);
+  document.getElementById('tgt-each').classList.toggle('active', t !== 0);
   document.getElementById('tgt-both').classList.toggle('active', t === 0);
 }
 
@@ -1356,6 +1440,9 @@ function applyData(d) {
   if (d.matter !== undefined) {
     setText('inf-matter', d.matter ? 'Yes' : 'No');
     setText('inf-matter-fabrics', d.matter ? String(d.matter_fabrics) : '—');
+    // Show Smart Home Platforms card only when Matter is available
+    document.getElementById('cfg-matter-card').style.display = d.matter ? '' : 'none';
+    if (d.matter) setText('cfg-matter-fabrics', String(d.matter_fabrics));
   }
   setText('inf-gw', d.gateway || '—');
   setText('inf-eip', d.external_ip || '—');

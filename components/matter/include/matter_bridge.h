@@ -59,6 +59,27 @@ public:
      */
     esp_err_t open_commissioning_window();
 
+    /** Temporary pairing info returned by open_enhanced_commissioning_window(). */
+    struct EcwInfo {
+        uint32_t pin;           ///< Randomly-generated 8-digit setup PIN
+        uint16_t discriminator; ///< Device discriminator (from NVS / fixed)
+        uint32_t timeout_s;     ///< Window duration in seconds
+    };
+
+    /**
+     * @brief Open an Enhanced Commissioning Window for multi-admin pairing.
+     *
+     * Generates a random one-time PIN and SPAKE2+ verifier, then opens a
+     * commissioning window on the operational network (not BLE).  Works
+     * whether or not the device is already commissioned.  A second smart-home
+     * platform can use the returned PIN + the device's mDNS name to pair.
+     *
+     * @param out_info  Filled with the temporary PIN, discriminator, and
+     *                  window duration on success.
+     * @return ESP_OK on success, ESP_FAIL on crypto/stack error.
+     */
+    esp_err_t open_enhanced_commissioning_window(EcwInfo& out_info);
+
     /** Commissioning info for on-device display (PIN + discriminator). */
     struct CommissioningInfo {
         uint32_t pin_code;       ///< Setup PIN (e.g. 20202021 in dev mode)

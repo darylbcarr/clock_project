@@ -13,6 +13,7 @@
 #include "cJSON.h"
 #include <cstring>
 #include <cstdlib>
+#include <cinttypes>
 
 static const char* TAG = "webserver";
 
@@ -43,7 +44,7 @@ void WebServer::start()
     httpd_config_t cfg   = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size        = 8192;
     cfg.max_open_sockets  = 7;
-    cfg.max_uri_handlers  = 12;  // default is 8; we register 9 handlers (root+6 API+2 logs+ws)
+    cfg.max_uri_handlers  = 13;  // default is 8; we register 10 handlers (root+6 API+2 logs+ecw+ws)
     cfg.lru_purge_enable  = true;
     cfg.uri_match_fn      = httpd_uri_match_wildcard;
     cfg.send_wait_timeout = 5;  // keep default; WS dead-socket cleanup uses sess_trigger_close
@@ -59,6 +60,7 @@ void WebServer::start()
     httpd_uri_t cmd      = { "/api/cmd",            HTTP_POST, on_api_cmd,          this };
     httpd_uri_t cfg_uri  = { "/api/cfg",            HTTP_POST, on_api_cfg,          this };
     httpd_uri_t ota_uri  = { "/api/ota",            HTTP_POST, on_api_ota,          this };
+    httpd_uri_t ecw_uri  = { "/api/matter/ecw",     HTTP_POST, on_api_matter_ecw,   this };
     httpd_uri_t scan_r   = { "/api/scan-results",   HTTP_GET,  on_api_scan_results, this };
     httpd_uri_t logs_get = { "/api/logs",           HTTP_GET,  on_api_logs_get,     this };
     httpd_uri_t logs_post= { "/api/logs",           HTTP_POST, on_api_logs_post,    this };
@@ -75,6 +77,7 @@ void WebServer::start()
     httpd_register_uri_handler(server_, &cmd);
     httpd_register_uri_handler(server_, &cfg_uri);
     httpd_register_uri_handler(server_, &ota_uri);
+    httpd_register_uri_handler(server_, &ecw_uri);
     httpd_register_uri_handler(server_, &scan_r);
     httpd_register_uri_handler(server_, &logs_get);
     httpd_register_uri_handler(server_, &logs_post);
@@ -402,6 +405,34 @@ esp_err_t WebServer::on_api_ota(httpd_req_t* req)
     snprintf(resp, sizeof(resp), "{\"ok\":true,\"msg\":\"%s\"}", msg);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+
+// ── Matter Enhanced Commissioning Window ──────────────────────────────────────
+
+esp_err_t WebServer::on_api_matter_ecw(httpd_req_t* req)
+{
+    auto* self = static_cast<WebServer*>(req->user_ctx);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    if (!self->matter_) {
+        return httpd_resp_send(req,
+            "{\"ok\":false,\"msg\":\"Matter not available\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    MatterBridge::EcwInfo info = {};
+    esp_err_t err = self->matter_->open_enhanced_commissioning_window(info);
+    if (err != ESP_OK) {
+        return httpd_resp_send(req,
+            "{\"ok\":false,\"msg\":\"Failed to open commissioning window\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    char resp[128];
+    snprintf(resp, sizeof(resp),
+             "{\"ok\":true,\"pin\":\"%08" PRIu32 "\",\"discriminator\":%u,\"timeout_s\":%" PRIu32 "}",
+             info.pin, info.discriminator, info.timeout_s);
     return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
 }
 

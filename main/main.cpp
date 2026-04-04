@@ -974,7 +974,8 @@ extern "C" void app_main()
     // push PacketBuffer allocations over the edge, causing Matter CASE failures.
     // OTA starts normally on every subsequent reboot (matter_commissioned=true).
     if (!did_first_time_setup || wifi_only) {
-        s_ota.start(s_display, [&]() { return s_net.is_connected(); });
+        s_ota.start(s_display, [&]() { return s_net.is_connected(); },
+                    [&]() { s_menu.wake(); });
     } else {
         ESP_LOGI(TAG, "OTA skipped during first-time Matter commissioning (heap conservation)");
     }

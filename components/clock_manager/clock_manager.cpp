@@ -684,8 +684,8 @@ void ClockManager::cmd_start_offset_cal()
     ESP_LOGI(TAG, "cmd_start_offset_cal: searching for slot...");
 
     // Advance the motor slowly, checking the sensor every few steps.
-    // Search up to 30 full clock-minutes of travel.
-    const int MAX_STEPS    = STEPS_PER_CLOCK_MINUTE * 30;
+    // Search up to 60 full clock-minutes of travel.
+    const int MAX_STEPS    = STEPS_PER_CLOCK_MINUTE * 60;
     const int POLL_EVERY   = 10;   // half-steps between sensor checks
     bool found = false;
 
@@ -703,7 +703,7 @@ void ClockManager::cmd_start_offset_cal()
     } else {
         cal_phase_ = CalPhase::NOT_FOUND;
         cal_mode_  = false;   // re-enable tick on failure
-        ESP_LOGW(TAG, "cmd_start_offset_cal: slot not found within %d steps", MAX_STEPS);
+        ESP_LOGW(TAG, "cmd_start_offset_cal: slot not found within %d steps (60 min)", MAX_STEPS);
     }
 }
 

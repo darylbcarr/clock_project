@@ -26,8 +26,10 @@ public:
      * @brief Launch the background OTA check task.
      * @param display          Used to show download progress on the OLED.
      * @param is_connected_fn  Returns true when WiFi is up and routable.
+     * @param wake_fn          Called before any display write to un-blank the display.
      */
-    void start(Display& display, std::function<bool()> is_connected_fn);
+    void start(Display& display, std::function<bool()> is_connected_fn,
+               std::function<void()> wake_fn = nullptr);
 
     /**
      * @brief Synchronous check+install (used by the UART console command).
@@ -84,6 +86,7 @@ private:
 
     Display*              display_         = nullptr;
     std::function<bool()> is_connected_fn_ = nullptr;
+    std::function<void()> wake_fn_         = nullptr;
     QueueHandle_t         action_queue_    = nullptr;
 
     char          latest_ver_buf_[VER_BUF_LEN] = {};
