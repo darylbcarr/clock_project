@@ -209,6 +209,10 @@ esp_err_t MatterBridge::start(bool fresh_commissioning)
         return err;
     }
 
+    // Register this instance as the AppDelegate so we receive commissioning
+    // window open/close notifications for logging.
+    chip::Server::GetInstance().GetCommissioningWindowManager().SetAppDelegate(this);
+
     // ── Coex fix: clear stale WiFi credentials on fresh commissioning ────────
     // esp_wifi_set_config() persists credentials in the WiFi driver's NVS.
     // On a fresh Matter commissioning attempt, those stale credentials cause
@@ -405,6 +409,39 @@ esp_err_t MatterBridge::attr_cb(
     return ESP_OK;
 }
 
+// ── AppDelegate callbacks ─────────────────────────────────────────────────────
+
+void MatterBridge::OnCommissioningWindowOpened()
+{
+    ESP_LOGI(TAG, "Commissioning window opened");
+}
+
+void MatterBridge::OnCommissioningWindowClosed()
+{
+    ESP_LOGI(TAG, "Commissioning window closed");
+    EventLog::log(LogCat::CLOCK_STARTUP, "Commissioning window closed");
+}
+
+void MatterBridge::OnCommissioningSessionEstablishmentStarted()
+{
+    ESP_LOGI(TAG, "Commissioning: PASE session establishment started");
+}
+
+void MatterBridge::OnCommissioningSessionStarted()
+{
+    ESP_LOGI(TAG, "Commissioning: PASE session established");
+}
+
+void MatterBridge::OnCommissioningSessionStopped()
+{
+    ESP_LOGI(TAG, "Commissioning: session stopped");
+}
+
+void MatterBridge::OnCommissioningSessionEstablishmentError(CHIP_ERROR err)
+{
+    ESP_LOGW(TAG, "Commissioning: session establishment error: %" CHIP_ERROR_FORMAT, err.Format());
+}
+
 // ── event_cb ──────────────────────────────────────────────────────────────────
 
 void MatterBridge::event_cb(
@@ -593,6 +630,22 @@ esp_err_t MatterBridge::open_enhanced_commissioning_window(EcwInfo& out_info)
     EventLog::log(LogCat::CLOCK_STARTUP, "ECW opened: PIN %08lu", (unsigned long)pin);
 
     return ESP_OK;
+}
+
+// ── close_commissioning_window ────────────────────────────────────────────────
+
+void MatterBridge::close_commissioning_window()
+{
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    auto& mgr = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (mgr.IsCommissioningWindowOpen()) {
+        mgr.CloseCommissioningWindow();
+        ESP_LOGI(TAG, "Commissioning window closed by user");
+        EventLog::log(LogCat::CLOCK_STARTUP, "ECW closed by user");
+    } else {
+        ESP_LOGI(TAG, "close_commissioning_window: no window was open");
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
 // ── is_commissioned ───────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ private:
     static esp_err_t on_api_cfg(httpd_req_t* req);
     static esp_err_t on_api_ota(httpd_req_t* req);
     static esp_err_t on_api_matter_ecw(httpd_req_t* req);
+    static esp_err_t on_api_matter_ecw_cancel(httpd_req_t* req);
     static esp_err_t on_api_scan_results(httpd_req_t* req);
     static esp_err_t on_api_logs_get(httpd_req_t* req);
     static esp_err_t on_api_logs_post(httpd_req_t* req);

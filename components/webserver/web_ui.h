@@ -763,7 +763,7 @@ input[type=range]::-webkit-slider-thumb {
 
     <!-- idle state -->
     <div id="ecw-idle">
-      <button class="btn btn-secondary btn-sm" onclick="openEcw()">Pair with Another Platform</button>
+      <button class="btn btn-secondary btn-sm" id="ecw-pair-btn" onclick="openEcw()">Pair with Another Platform</button>
     </div>
 
     <!-- active state: PIN + countdown -->
@@ -785,7 +785,7 @@ input[type=range]::-webkit-slider-thumb {
     <!-- expired state -->
     <div id="ecw-expired" style="display:none;">
       <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Window expired. Try again if needed.</p>
-      <button class="btn btn-secondary btn-sm" onclick="openEcw()">Try Again</button>
+      <button class="btn btn-secondary btn-sm" onclick="showEcwIdle();openEcw()">Try Again</button>
     </div>
   </div>
 
@@ -1024,17 +1024,33 @@ function setAutoUpdate(val) {
 let ecwTimer = null;
 
 function openEcw() {
+  const btn = document.getElementById('ecw-pair-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening\u2026'; }
   fetch('/api/matter/ecw', {method:'POST'})
     .then(r => r.json())
     .then(d => {
-      if (!d.ok) { toast(d.msg || 'Failed to open commissioning window', 'err'); return; }
+      if (!d.ok) {
+        toast(d.msg || 'Failed to open commissioning window', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = 'Pair with Another Platform'; }
+        return;
+      }
       setText('ecw-pin', d.pin);
       document.getElementById('ecw-idle').style.display    = 'none';
       document.getElementById('ecw-expired').style.display = 'none';
       document.getElementById('ecw-active').style.display  = '';
+      if (btn) { btn.disabled = false; btn.textContent = 'Pair with Another Platform'; }
       startEcwCountdown(d.timeout_s || 180);
     })
-    .catch(() => toast('Request failed', 'err'));
+    .catch(() => {
+      toast('Request failed', 'err');
+      if (btn) { btn.disabled = false; btn.textContent = 'Pair with Another Platform'; }
+    });
+}
+
+function showEcwIdle() {
+  document.getElementById('ecw-idle').style.display    = '';
+  document.getElementById('ecw-expired').style.display = 'none';
+  document.getElementById('ecw-active').style.display  = 'none';
 }
 
 function cancelEcw() {
@@ -1042,6 +1058,7 @@ function cancelEcw() {
   ecwTimer = null;
   document.getElementById('ecw-active').style.display  = 'none';
   document.getElementById('ecw-idle').style.display    = '';
+  fetch('/api/matter/ecw/cancel', {method:'POST'}).catch(() => {});
 }
 
 function startEcwCountdown(seconds) {
