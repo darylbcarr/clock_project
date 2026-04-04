@@ -831,9 +831,10 @@ LongA: confirm</pre>
   <pre> Matter Pairing
 Go to Smart Home
 
-
 Disc: XXXX
-&lt;manual code&gt;</pre>
+Code:XXXXXXXXXXX 
+
+A or B: back</pre>
 
   <ol class="steps">
     <li><div class="step-num">1</div><div>Open your smart-home app (Alexa, Apple Home, or Google Home).</div></li>
@@ -1006,7 +1007,7 @@ http://clock_a1b2.local</pre>
   </div>
 
   <h3>Apply To Selector</h3>
-  <p>At the top of each strip card, the <strong>APPLY TO</strong> row lets you target <strong>Ring</strong>, <strong>Base</strong>, or <strong>Both</strong> strips at once for brightness and colour changes.</p>
+  <p>At the top of each strip card, the <strong>APPLY TO</strong> row lets you target <strong>Ring</strong> separately or <strong>Both</strong> strips at once for brightness and colour changes.</p>
 
   <h3>Brightness</h3>
   <p>A slider from 0 to 255. Changes take effect immediately as you drag. The setting is saved automatically.</p>
@@ -1216,14 +1217,14 @@ http://clock_a1b2.local</pre>
   </div>
 
   <h3>Motor Speed</h3>
-  <p>Controls how fast the stepper motor turns, in microseconds per half-step. Drag the slider and press <strong>Save Speed</strong>.</p>
+  <p>Controls how fast the stepper motor turns, in microseconds per half-step. Adjust to determine the optimal balance between speed and noise.</p>
   <div class="tbl-wrap">
     <table>
       <thead><tr><th>Value</th><th>Effect</th></tr></thead>
       <tbody>
-        <tr><td><strong>900 µs</strong> (min)</td><td>Fastest rotation — noisiest</td></tr>
+        <tr><td><strong>500 µs</strong> (min)</td><td>Fastest rotation</td></tr>
         <tr><td><strong>2000 µs</strong> (default)</td><td>~8 seconds per revolution — balanced</td></tr>
-        <tr><td><strong>3000 µs</strong> (max)</td><td>Slowest, quietest — recommended for bedroom use</td></tr>
+        <tr><td><strong>3000 µs</strong> (max)</td><td>Slowest rotation</td></tr>
       </tbody>
     </table>
   </div>
@@ -1249,6 +1250,18 @@ http://clock_a1b2.local</pre>
 
   <h3>WiFi Credentials</h3>
   <p>Update the stored WiFi network name and password without using the physical buttons. Enter the new SSID and password and press <strong>Save &amp; Restart</strong>. The connection will drop briefly during restart. Matter commissioning data is preserved.</p>
+
+  <h3>Smart Home Platforms</h3>
+  <p>Shows how many smart-home platforms (Matter fabrics) are currently paired with the clock. Use this card to add a second platform without removing the first.</p>
+  <ol class="steps">
+    <li><div class="step-num">1</div><div>Press <strong>Pair with Another Platform</strong>. A one-time 8-digit PIN is generated and displayed with a 3-minute countdown.</div></li>
+    <li><div class="step-num">2</div><div>Open your second platform's app, add a new device, and enter the PIN when prompted. The clock is discovered over your local network — no BLE or QR code is required.</div></li>
+    <li><div class="step-num">3</div><div>Once pairing completes, <strong>Paired Platforms</strong> increments. Press <strong>Cancel</strong> at any time to close the window early.</div></li>
+  </ol>
+  <div class="callout info">
+    <span class="callout-icon">ⓘ</span>
+    <p>The PIN is single-use and expires after 3 minutes. If it expires before pairing completes, press <strong>Try Again</strong> to generate a new one. This card only appears when Matter is enabled on the device.</p>
+  </div>
 
   <h3>Firmware Update (OTA)</h3>
   <div class="tbl-wrap">
@@ -1402,11 +1415,14 @@ http://clock_a1b2.local</pre>
   <p>Alexa sends colours using the XY colour space. The clock converts these to RGB and normalises to full brightness, then applies the configured brightness separately. The colour swatches on the Lights tab are calibrated to match Alexa's named colours exactly.</p>
 
   <h3>Adding the Clock to a Second Smart-Home Platform</h3>
+  <p>The clock supports multiple smart-home platforms simultaneously (e.g. Alexa and Apple Home) using Matter multi-admin. Each platform gets its own fabric and can control the LED strips independently.</p>
   <ol class="steps">
-    <li><div class="step-num">1</div><div>Navigate to the <span class="tab-pill"><span class="tab-dot"></span>Info</span> tab and find the <strong>Matter</strong> section.</div></li>
-    <li><div class="step-num">2</div><div>Press <strong>Open Commissioning Window</strong>.</div></li>
-    <li><div class="step-num">3</div><div>Scan the QR code or enter the pairing code in the second platform's app.</div></li>
+    <li><div class="step-num">1</div><div>Navigate to the <span class="tab-pill"><span class="tab-dot"></span>Config</span> tab and find the <strong>Smart Home Platforms</strong> card.</div></li>
+    <li><div class="step-num">2</div><div>Press <strong>Pair with Another Platform</strong>. A one-time 8-digit PIN will be generated and displayed with a 3-minute countdown.</div></li>
+    <li><div class="step-num">3</div><div>Open your second platform's app and add a new device. Enter the PIN when prompted. The clock is discovered over your local network — no QR code or BLE required.</div></li>
+    <li><div class="step-num">4</div><div>Once paired, the <strong>Paired Platforms</strong> count on the card will increment. Press <strong>Cancel</strong> at any time to close the window early.</div></li>
   </ol>
+  <p style="font-size:13px;color:var(--muted, #888);margin-top:8px;"><strong>Note:</strong> The PIN is single-use and expires after 3 minutes. Generate a new one if it expires before pairing is complete.</p>
 
   <div class="page-nav">
     <a class="page-nav-btn" data-page="logs-tab">
@@ -1513,11 +1529,6 @@ Restart: Xm Xs</pre>
           <td><kbd>Hold A + B</kbd></td>
           <td>5 seconds</td>
           <td>Display shows <em>WiFi Reset! / Restarting…</em> then device restarts into first-time setup</td>
-        </tr>
-        <tr>
-          <td><kbd>Hold encoder button</kbd></td>
-          <td>5 seconds</td>
-          <td>Same as above</td>
         </tr>
       </tbody>
     </table>
