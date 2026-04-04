@@ -15,6 +15,7 @@
 #include <setup_payload/SetupPayload.h>
 #include <crypto/CHIPCryptoPAL.h>
 #include <lib/core/DataModelTypes.h>
+#include <platform/PlatformManager.h>
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_efuse.h"
@@ -564,8 +565,9 @@ esp_err_t MatterBridge::open_enhanced_commissioning_window(EcwInfo& out_info)
     auto info = get_commissioning_info();
     uint16_t discriminator = info.discriminator;
 
-    // ── Open the Enhanced Commissioning Window ────────────────────────────────
+    // ── Open the Enhanced Commissioning Window (must hold CHIP stack lock) ───
     static constexpr uint32_t kTimeoutS = 180;  // 3 minutes
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
     auto& mgr = Server::GetInstance().GetCommissioningWindowManager();
     err = mgr.OpenEnhancedCommissioningWindow(
         System::Clock::Seconds32(kTimeoutS),
@@ -575,6 +577,7 @@ esp_err_t MatterBridge::open_enhanced_commissioning_window(EcwInfo& out_info)
         ByteSpan(salt, sizeof(salt)),
         kUndefinedFabricIndex,
         VendorId::NotSpecified);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
     if (err != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "ECW: OpenEnhancedCommissioningWindow failed: %" CHIP_ERROR_FORMAT, err.Format());
