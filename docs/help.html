@@ -602,7 +602,6 @@
         <tr><td><strong>Motor</strong></td><td>28BYJ-48 stepper motor, half-step mode, 4096 steps/rev</td></tr>
         <tr><td><strong>Position sensor</strong></td><td>LED + LDR detecting a reflective slot at 12:00 on the clock ring</td></tr>
         <tr><td><strong>Display</strong></td><td>SSD1306 0.96&quot; OLED (128×64), I²C</td></tr>
-        <tr><td><strong>Encoder</strong></td><td>Adafruit Seesaw rotary encoder with A/B buttons</td></tr>
         <tr><td><strong>Ring LEDs</strong></td><td>WS2812B addressable strip around the clock face (default 30 LEDs)</td></tr>
         <tr><td><strong>Base LEDs</strong></td><td>WS2812B addressable strip underneath the clock (default 30 LEDs)</td></tr>
       </tbody>
@@ -786,16 +785,15 @@
 &gt; Matter
   Setup WiFi
 
-A/B/Rot: pick
-LongA/Enc: ok</pre>
+A/B: pick
+LongA: ok</pre>
 
   <div class="tbl-wrap">
     <table>
       <thead><tr><th>Input</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td><kbd>Rotate encoder</kbd> or tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Toggle between Matter and Setup WiFi</td></tr>
+        <tr><td><kbd>Tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Toggle between Matter and Setup WiFi</td></tr>
         <tr><td><kbd>Long-press A</kbd> ≥ 800 ms</td><td>Confirm selection</td></tr>
-        <tr><td><kbd>Encoder press</kbd></td><td>Confirm selection</td></tr>
       </tbody>
     </table>
   </div>
@@ -809,10 +807,9 @@ LongA/Enc: ok</pre>
       <table>
         <thead><tr><th>Input</th><th>Action</th></tr></thead>
         <tbody>
-          <tr><td><kbd>Rotate</kbd> or tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Move cursor through the character grid</td></tr>
+          <tr><td><kbd>Tap <kbd>A</kbd> / <kbd>B</kbd></td><td>Move cursor through the character grid</td></tr>
           <tr><td><kbd>Long-press A</kbd></td><td>Append selected character</td></tr>
-          <tr><td><kbd>Encoder short press</kbd></td><td>Append selected character</td></tr>
-          <tr><td><kbd>Long-press B</kbd> or <kbd>Encoder long</kbd></td><td>Backspace — delete last character</td></tr>
+          <tr><td><kbd>Long-press B</kbd></td><td>Backspace — delete last character</td></tr>
           <tr><td>Navigate to <kbd>&gt;</kbd> then press</td><td>Confirm and submit</td></tr>
           <tr><td><kbd>Hold A + B</kbd> ≥ 800 ms</td><td>Cancel — return to choice screen</td></tr>
         </tbody>
@@ -1120,17 +1117,18 @@ http://clock_a1b2.local</pre>
     <table>
       <thead><tr><th>GPIO</th><th>Function</th></tr></thead>
       <tbody>
-        <tr><td><strong>6</strong></td><td>Stepper IN4</td></tr>
-        <tr><td><strong>7</strong></td><td>Stepper IN3</td></tr>
-        <tr><td><strong>8</strong></td><td>I²C SDA (Display + Encoder)</td></tr>
-        <tr><td><strong>9</strong></td><td>I²C SCL (Display + Encoder)</td></tr>
+        <tr><td><strong>1</strong></td><td>LED Ring</td></tr>
+        <tr><td><strong>2</strong></td><td>LED Base</td></tr>
+        <tr><td><strong>8</strong></td><td>I²C SDA (Display)</td></tr>
+        <tr><td><strong>9</strong></td><td>I²C SCL (Display)</td></tr>
         <tr><td><strong>10</strong></td><td>Button A (Menu Prev)</td></tr>
         <tr><td><strong>11</strong></td><td>Button B (Menu Next)</td></tr>
         <tr><td><strong>13</strong></td><td>Sensor LED (output)</td></tr>
         <tr><td><strong>14</strong></td><td>Sensor LDR (ADC input)</td></tr>
-        <tr><td><strong>15</strong></td><td>Stepper IN2</td></tr>
         <tr><td><strong>16</strong></td><td>Stepper IN1</td></tr>
-        <tr><td><strong>LED1 / LED2</strong></td><td>WS2812B Ring / Base data lines</td></tr>
+        <tr><td><strong>15</strong></td><td>Stepper IN2</td></tr>
+        <tr><td><strong>7</strong></td><td>Stepper IN3</td></tr>
+        <tr><td><strong>6</strong></td><td>Stepper IN4</td></tr>
       </tbody>
     </table>
   </div>
@@ -1463,7 +1461,7 @@ Restart: Xm Xs</pre>
       <table>
         <thead><tr><th>Input</th><th>Action</th></tr></thead>
         <tbody>
-          <tr><td><kbd>Single button press</kbd> or <kbd>Encoder press</kbd></td><td>Enter new WiFi credentials using the on-screen text entry</td></tr>
+          <tr><td><kbd>Single button press</kbd></td><td>Enter new WiFi credentials using the on-screen text entry</td></tr>
           <tr><td><kbd>Hold A + B</kbd> 2 seconds</td><td>Full reset — clears all WiFi and Matter data, restarts into first-time setup</td></tr>
           <tr><td>Timeout (10 minutes)</td><td>Device restarts and tries again</td></tr>
         </tbody>

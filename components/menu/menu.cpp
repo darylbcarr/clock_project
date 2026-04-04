@@ -753,7 +753,7 @@ bool Menu::show_wifi_credentials(std::string &ssid, std::string &pw)
             cl.push_back(trunc16(ssid));
             cl.push_back("PW:");
             cl.push_back(pw.empty() ? "(none)" : trunc16(pw));
-            cl.push_back("A:back  B/Enc:ok");
+            cl.push_back("A:back  B:ok");
             display_.writeLines(cl, -1);
 
             bool go_back = false, confirmed = false;
@@ -926,7 +926,7 @@ Menu::SetupResult Menu::first_time_setup()
         display_.print(3, choice == 1 ? "> Setup WiFi" : "  Setup WiFi");
         if (encoder_ok_) {
             display_.print(5, "Rot/A/B: select");
-            display_.print(6, "LongA/Enc: ok");
+            display_.print(6, "LongA: ok");
         } else {
             display_.print(5, "A/B: select");
             display_.print(6, "LongA: confirm");
