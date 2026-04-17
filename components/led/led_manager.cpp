@@ -209,6 +209,40 @@ void LedManager::get_color(int idx, uint8_t& r, uint8_t& g, uint8_t& b) const
     b = strips_[idx].b;
 }
 
+uint8_t LedManager::get_speed(int idx) const
+{
+    if (idx < 0 || idx >= STRIP_COUNT) return 5;
+    return strips_[idx].speed;
+}
+
+uint16_t LedManager::get_group_size(int idx) const
+{
+    if (idx < 0 || idx >= STRIP_COUNT) return 0;
+    return strips_[idx].group_size;
+}
+
+void LedManager::set_speed(Target t, uint8_t speed)
+{
+    if (speed < 1)  speed = 1;
+    if (speed > 10) speed = 10;
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    for (int i = 0; i < STRIP_COUNT; i++) {
+        if (t == Target::BOTH || static_cast<int>(t) == i)
+            strips_[i].speed = speed;
+    }
+    xSemaphoreGive(mutex_);
+}
+
+void LedManager::set_group_size(Target t, uint16_t size)
+{
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    for (int i = 0; i < STRIP_COUNT; i++) {
+        if (t == Target::BOTH || static_cast<int>(t) == i)
+            strips_[i].group_size = size;
+    }
+    xSemaphoreGive(mutex_);
+}
+
 // ── Effect task ───────────────────────────────────────────────────────────────
 
 void LedManager::effect_task(void* arg)
@@ -241,6 +275,25 @@ void LedManager::tick_strip(StripState& s)
     }
     s.phase++;
     led_strip_refresh(s.handle);
+}
+
+// ── eff_divisor / eff_group ───────────────────────────────────────────────────
+
+uint16_t LedManager::eff_divisor(const StripState& s)
+{
+    // Normalised to strip length: one full cycle ≈ 2 s at speed=5 for any strip.
+    // divisor = 300 / (speed × active_len), min 1
+    // Examples at speed=5: 6 LEDs→10, 30 LEDs→2, 60 LEDs→1
+    if (s.active_len == 0) return 1;
+    uint32_t d = 300u / (static_cast<uint32_t>(s.speed) * s.active_len);
+    return static_cast<uint16_t>(d < 1u ? 1u : d);
+}
+
+uint16_t LedManager::eff_group(const StripState& s)
+{
+    uint16_t g = s.group_size > 0 ? s.group_size
+                                   : static_cast<uint16_t>(std::max(1, (int)s.active_len / 5));
+    return std::min(g, s.active_len);
 }
 
 // ── apply_pixel ───────────────────────────────────────────────────────────────
@@ -292,8 +345,9 @@ void LedManager::fx_static(StripState& s)
 
 void LedManager::fx_breathe(StripState& s)
 {
-    // Full period ≈ 90 ticks × 33 ms ≈ 3 s
-    float t     = static_cast<float>(s.phase % 90) / 90.0f;
+    // Period: speed=1→~15 s, speed=5→~3 s, speed=10→~1.5 s
+    uint32_t period = std::max(10u, 450u / s.speed);
+    float t     = static_cast<float>(s.phase % period) / static_cast<float>(period);
     float level = (1.0f - cosf(2.0f * static_cast<float>(M_PI) * t)) * 0.5f;
     auto  bsc   = static_cast<uint8_t>(static_cast<float>(s.brightness) * level);
     for (uint16_t i = 0; i < s.active_len; i++) {
@@ -308,9 +362,11 @@ void LedManager::fx_breathe(StripState& s)
 
 void LedManager::fx_rainbow(StripState& s)
 {
+    // hue rotation: speed=1→1/tick, speed=5→3/tick (current), speed=10→6/tick
+    uint8_t hue_step = static_cast<uint8_t>(std::max(1, (int)s.speed * 3 / 5));
     for (uint16_t i = 0; i < s.active_len; i++) {
         uint8_t hue = static_cast<uint8_t>(
-            (i * 256 / s.active_len + s.phase * 3) & 0xFF);
+            (i * 256 / s.active_len + s.phase * hue_step) & 0xFF);
         uint8_t r, g, b;
         hue_to_rgb(hue, r, g, b);
         apply_pixel(s, i, r, g, b);
@@ -323,48 +379,41 @@ void LedManager::fx_chase(StripState& s)
 {
     if (s.active_len == 0) return;
 
-    // Advance every 2 ticks
-    if (s.phase % 2 == 0)
+    if (s.phase % eff_divisor(s) == 0)
         s.chase_pos = static_cast<uint16_t>((s.chase_pos + 1) % s.active_len);
 
-    for (uint16_t i = 0; i < s.active_len; i++)
+    for (uint16_t i = 0; i < s.max_len; i++)
         led_strip_set_pixel(s.handle, i, 0, 0, 0);
 
-    // Head (full), +1 back (50%), +2 back (25%)
-    auto set_chase = [&](int offset, uint8_t scale) {
-        int pos = (static_cast<int>(s.chase_pos) - offset + s.active_len) % s.active_len;
-        uint8_t rs = static_cast<uint8_t>(static_cast<uint16_t>(s.r) * s.brightness / 255 * scale / 255);
-        uint8_t gs = static_cast<uint8_t>(static_cast<uint16_t>(s.g) * s.brightness / 255 * scale / 255);
-        uint8_t bs = static_cast<uint8_t>(static_cast<uint16_t>(s.b) * s.brightness / 255 * scale / 255);
+    uint16_t tail = eff_group(s);
+    for (uint16_t t = 0; t < tail; t++) {
+        int pos = (static_cast<int>(s.chase_pos) - t + s.active_len) % s.active_len;
+        float fade = 1.0f - static_cast<float>(t) / tail;
+        uint8_t sc = static_cast<uint8_t>(s.brightness * fade);
+        uint8_t rs = static_cast<uint8_t>(static_cast<uint16_t>(s.r) * sc / 255);
+        uint8_t gs = static_cast<uint8_t>(static_cast<uint16_t>(s.g) * sc / 255);
+        uint8_t bs = static_cast<uint8_t>(static_cast<uint16_t>(s.b) * sc / 255);
         led_strip_set_pixel(s.handle, static_cast<uint16_t>(pos), rs, gs, bs);
-    };
-    set_chase(0, 255);
-    set_chase(1, 127);
-    set_chase(2, 50);
-    set_chase(3, 20);
-
-    for (uint16_t i = s.active_len; i < s.max_len; i++)
-        led_strip_set_pixel(s.handle, i, 0, 0, 0);
+    }
 }
 
 void LedManager::fx_sparkle(StripState& s)
 {
-    // On first tick of this effect cycle, clear the strip
     if (s.phase == 0) {
         for (uint16_t i = 0; i < s.max_len; i++)
             led_strip_set_pixel(s.handle, i, 0, 0, 0);
     }
-    // Each tick: light one pixel, extinguish one
-    uint16_t on_idx  = static_cast<uint16_t>(rand() % s.active_len);
-    uint16_t off_idx = static_cast<uint16_t>(rand() % s.active_len);
-    apply_pixel(s, on_idx, s.r, s.g, s.b);
-    led_strip_set_pixel(s.handle, off_idx, 0, 0, 0);
+    // Light and extinguish eff_group() pixels per tick
+    uint16_t n = eff_group(s);
+    for (uint16_t k = 0; k < n; k++) {
+        apply_pixel(s, static_cast<uint16_t>(rand() % s.active_len), s.r, s.g, s.b);
+        led_strip_set_pixel(s.handle, static_cast<uint16_t>(rand() % s.active_len), 0, 0, 0);
+    }
 }
 
 void LedManager::fx_wipe(StripState& s)
 {
-    // Advance position every 2 ticks
-    if (s.phase % 2 == 0) {
+    if (s.phase % eff_divisor(s) == 0) {
         s.wipe_pos++;
         if (s.wipe_pos > s.active_len) {
             s.wipe_pos  = 0;
@@ -389,12 +438,12 @@ void LedManager::fx_comet(StripState& s)
     for (uint16_t i = 0; i < s.max_len; i++)
         led_strip_set_pixel(s.handle, i, 0, 0, 0);
 
-    int head = static_cast<int>(s.phase % s.active_len);
-    static constexpr int TAIL_LEN = 8;
-    for (int tail = 0; tail < TAIL_LEN; tail++) {
-        int pos = head - tail;
+    int head = static_cast<int>((s.phase / eff_divisor(s)) % s.active_len);
+    uint16_t tail_len = eff_group(s);
+    for (uint16_t t = 0; t < tail_len; t++) {
+        int pos = head - static_cast<int>(t);
         if (pos < 0) pos += s.active_len;
-        float fade = 1.0f - static_cast<float>(tail) / TAIL_LEN;
+        float fade = 1.0f - static_cast<float>(t) / tail_len;
         uint8_t rs = static_cast<uint8_t>(s.r * fade * s.brightness / 255.0f);
         uint8_t gs = static_cast<uint8_t>(s.g * fade * s.brightness / 255.0f);
         uint8_t bs = static_cast<uint8_t>(s.b * fade * s.brightness / 255.0f);

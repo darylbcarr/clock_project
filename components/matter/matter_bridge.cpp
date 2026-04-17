@@ -239,6 +239,27 @@ esp_err_t MatterBridge::start(bool fresh_commissioning)
         }
     }
 
+    // Force OnOff=true so the strips are always visible after reboot.
+    // esp_matter::start() loads persisted attributes from NVS and fires attr_cb
+    // for each; if the last session left OnOff=false (user turned off via Alexa),
+    // or Level=1 (Alexa's brief dim-to-1 colour-transition artefact), apply()
+    // would leave the strips off.  Force both here so the subsequent ATTR_SAT
+    // force's apply() always uses a visible state.
+    {
+        esp_matter_attr_val_t on_val = esp_matter_bool(true);
+        esp_matter::attribute::update(ep_[0].id, CLUSTER_ON_OFF, ATTR_ON_OFF, &on_val);
+        esp_matter::attribute::update(ep_[1].id, CLUSTER_ON_OFF, ATTR_ON_OFF, &on_val);
+
+        for (int i = 0; i < 2; i++) {
+            if (ep_[i].level < 10) {
+                ep_[i].level = 128;
+                esp_matter_attr_val_t lv = esp_matter_uint8(128);
+                esp_matter::attribute::update(ep_[i].id, CLUSTER_LEVEL, ATTR_LEVEL_CUR, &lv);
+            }
+        }
+        ESP_LOGI(TAG, "OnOff forced to true on both endpoints (level floor applied if needed)");
+    }
+
     // Force ColorMode to HS (0) so Alexa classifies both strips as Color Lights
     // and sends MoveToHueAndSaturation for colour commands.
     // NVS may persist an old CT (2) or XY (1) mode from a prior session.
@@ -246,6 +267,16 @@ esp_err_t MatterBridge::start(bool fresh_commissioning)
     esp_matter::attribute::update(ep_[0].id, CLUSTER_COLOR, ATTR_COLOR_MODE, &hs_mode);
     esp_matter::attribute::update(ep_[1].id, CLUSTER_COLOR, ATTR_COLOR_MODE, &hs_mode);
     ESP_LOGI(TAG, "ColorMode forced to HS on both endpoints");
+
+    // Force CurrentSaturation to 254 so Alexa sees a fully-saturated device on
+    // reconnect.  Alexa often sends MoveToHue only (not MoveToHueAndSaturation)
+    // when the device reports non-zero saturation, assuming it hasn't changed.
+    // Without this, a reboot resets the attribute store to 0 (white), and all
+    // colour commands result in white until the user explicitly sets saturation.
+    esp_matter_attr_val_t full_sat = esp_matter_uint8(254);
+    esp_matter::attribute::update(ep_[0].id, CLUSTER_COLOR, ATTR_SAT, &full_sat);
+    esp_matter::attribute::update(ep_[1].id, CLUSTER_COLOR, ATTR_SAT, &full_sat);
+    ESP_LOGI(TAG, "CurrentSaturation initialised to 254 on both endpoints");
 
     // Print commissioning codes at INFO level (CHIP only prints them at DEBUG).
     auto info = get_commissioning_info();
@@ -288,6 +319,8 @@ esp_err_t MatterBridge::start(bool fresh_commissioning)
 
 void MatterBridge::apply(int idx)
 {
+    if (suppress_apply_) return;
+
     auto tgt = (idx == 0) ? LedManager::Target::STRIP_1
                           : LedManager::Target::STRIP_2;
 
@@ -322,6 +355,8 @@ void MatterBridge::apply(int idx)
     leds_.set_effect(tgt, LedManager::Effect::STATIC);
     leds_.set_color(tgt, r, g, b);
     leds_.set_brightness(tgt, ep_[idx].level);
+
+    if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
 }
 
 // ── attr_cb ───────────────────────────────────────────────────────────────────

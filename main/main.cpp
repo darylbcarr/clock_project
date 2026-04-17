@@ -647,6 +647,13 @@ extern "C" void app_main()
     if (s_matter.init() != ESP_OK) {
         ESP_LOGW(TAG, "Matter init failed — continuing without Matter");
     }
+    // Block apply() from touching the LEDs during start()-time forced attribute
+    // updates (OnOff=true, ColorMode=0, CurrentSaturation=254).  Those writes
+    // must reach the Matter attribute store so Alexa sees the correct initial
+    // state, but they must NOT override the ledCfg-restored colours below.
+    // suppress_apply(false) + set_on_apply() are called after all networking /
+    // Matter startup paths complete, just before the web server starts.
+    s_matter.suppress_apply(true);
 
     // Apply persisted LED config (after start so the effect task is running)
     for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
@@ -962,6 +969,24 @@ extern "C" void app_main()
             }
         }
     }
+
+    // ── 4a. Re-enable Matter LED updates and wire persistence callback ────────
+    // All Matter start() paths are now complete.  Re-enable apply() so runtime
+    // Alexa commands update the LEDs normally.  The callback saves the full LED
+    // state to ledCfg (same NVS store the web UI uses) after every apply(), so
+    // Matter-driven colour/brightness changes survive reboot just like web ones.
+    s_matter.suppress_apply(false);
+    s_matter.set_on_apply([](void* arg) {
+        auto* leds = static_cast<LedManager*>(arg);
+        LedCfg cfg;
+        for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
+            cfg.strip[i].len        = leds->get_active_len(i);
+            cfg.strip[i].brightness = leds->get_brightness(i);
+            cfg.strip[i].effect     = static_cast<uint8_t>(leds->get_effect(i));
+            leds->get_color(i, cfg.strip[i].r, cfg.strip[i].g, cfg.strip[i].b);
+        }
+        ConfigStore::save(cfg);
+    }, &s_leds);
 
     // ── 4a. Web server — starts HTTP + WebSocket on port 80 ──────────────────
     s_webserver.set_ota(&s_ota);

@@ -44,11 +44,15 @@ public:
     void set_brightness(Target t, uint8_t brightness);
     void set_effect(Target t, Effect e);
     void set_active_len(Target t, uint16_t len);
+    void set_speed(Target t, uint8_t speed);        // 1 (slow) … 10 (fast)
+    void set_group_size(Target t, uint16_t size);   // 0 = auto (active_len/5, min 1)
     void next_effect(Target t);
 
     Effect   get_effect(int idx)     const;
     uint8_t  get_brightness(int idx) const;
     uint16_t get_active_len(int idx) const;
+    uint8_t  get_speed(int idx)      const;
+    uint16_t get_group_size(int idx) const;
     void     get_color(int idx, uint8_t& r, uint8_t& g, uint8_t& b) const;
 
 private:
@@ -62,6 +66,8 @@ private:
         uint8_t            g          = 255;
         uint8_t            b          = 255;
         uint8_t            brightness = 128;
+        uint8_t            speed      = 5;    // 1 (slow) … 10 (fast)
+        uint16_t           group_size = 0;    // 0 = auto (active_len/5, min 1)
         uint32_t           phase      = 0;
         uint16_t           chase_pos  = 0;
         bool               wipe_fill  = true;
@@ -83,6 +89,15 @@ private:
     void fx_sparkle(StripState& s);
     void fx_wipe(StripState& s);
     void fx_comet(StripState& s);
+
+    // Returns ticks per position-advance, normalised to strip length so that
+    // one full sweep takes ~2 s at speed=5 regardless of active_len.
+    // Formula: max(1, 300 / (speed × active_len))
+    static uint16_t eff_divisor(const StripState& s);
+
+    // Returns the effective tail / group length.
+    // Explicit group_size if set; otherwise active_len/5, min 1.
+    static uint16_t eff_group(const StripState& s);
 
     static void hue_to_rgb(uint8_t hue, uint8_t& r, uint8_t& g, uint8_t& b);
     static void effect_task(void* arg);
