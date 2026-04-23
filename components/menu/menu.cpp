@@ -918,10 +918,13 @@ Menu::SetupResult Menu::first_time_setup()
     uint32_t btnA_hold = 0;
     bool btnA_longfire = false;
 
+    char setup_title[24];
+    snprintf(setup_title, sizeof(setup_title), "  Setup v%s", OtaManager::running_version());
+
     auto render_choice = [&]()
     {
         display_.clear();
-        display_.print(0, "  First-Time Setup");
+        display_.print(0, setup_title);
         display_.print(2, choice == 0 ? "> Matter" : "  Matter");
         display_.print(3, choice == 1 ? "> Setup WiFi" : "  Setup WiFi");
         if (encoder_ok_) {
