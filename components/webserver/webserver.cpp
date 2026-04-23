@@ -210,6 +210,21 @@ esp_err_t WebServer::on_api_cmd(httpd_req_t* req)
                                HTTPD_RESP_USE_STRLEN);
     }
 
+    // set-apply-mode — persists the Apply-To selection (0=Both, 1=Each)
+    if (strcmp(cmd_name, "set-apply-mode") == 0) {
+        cJSON* mj = cJSON_GetObjectItem(body, "mode");
+        if (cJSON_IsNumber(mj)) {
+            self->led_apply_mode_ = (uint8_t)(mj->valueint ? 1 : 0);
+            if (self->matter_) self->matter_->set_apply_mode(self->led_apply_mode_);
+            self->save_led_config();
+        }
+        cJSON_Delete(body);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req, "{\"ok\":true,\"msg\":\"OK\"}",
+                               HTTPD_RESP_USE_STRLEN);
+    }
+
     // set-time with optional observed 12h position
     if (strcmp(cmd_name, "set-time") == 0) {
         cJSON* hj = cJSON_GetObjectItem(body, "observed_hour");
@@ -458,6 +473,7 @@ void WebServer::save_led_config()
         cfg.strip[i].effect     = static_cast<uint8_t>(leds_.get_effect(i));
         leds_.get_color(i, cfg.strip[i].r, cfg.strip[i].g, cfg.strip[i].b);
     }
+    cfg.apply_mode = led_apply_mode_;
     ConfigStore::save(cfg);
 }
 
@@ -762,6 +778,7 @@ char* WebServer::build_status_json()
     // LED strips
     cJSON* leds_obj = cJSON_AddObjectToObject(root, "leds");
     if (leds_obj) {
+        cJSON_AddNumberToObject(leds_obj, "apply_mode", led_apply_mode_);
         const char* strip_keys[LedManager::STRIP_COUNT] = { "strip1", "strip2" };
         for (int i = 0; i < LedManager::STRIP_COUNT; i++) {
             cJSON* strip = cJSON_AddObjectToObject(leds_obj, strip_keys[i]);

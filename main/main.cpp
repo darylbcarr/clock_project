@@ -664,6 +664,8 @@ extern "C" void app_main()
         s_leds.set_color(tgt, ledCfg.strip[i].r, ledCfg.strip[i].g, ledCfg.strip[i].b);
         s_leds.set_effect(tgt, static_cast<LedManager::Effect>(ledCfg.strip[i].effect));
     }
+    s_webserver.set_led_apply_mode(ledCfg.apply_mode);
+    s_matter.set_apply_mode(ledCfg.apply_mode);
 
     // ── 3. Menu — wire dismiss, then build full tree ──────────────────────────
     // dismiss_fn polls the encoder directly (with mutex) so it works even
@@ -985,6 +987,7 @@ extern "C" void app_main()
             cfg.strip[i].effect     = static_cast<uint8_t>(leds->get_effect(i));
             leds->get_color(i, cfg.strip[i].r, cfg.strip[i].g, cfg.strip[i].b);
         }
+        cfg.apply_mode = s_webserver.get_led_apply_mode();
         ConfigStore::save(cfg);
     }, &s_leds);
 

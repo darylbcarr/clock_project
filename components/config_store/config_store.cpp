@@ -78,6 +78,7 @@ bool ConfigStore::save(const LedCfg& c)
         snprintf(key, sizeof(key), "led%d_br",  i); nvs_set_u8 (h, key, c.strip[i].brightness);
         snprintf(key, sizeof(key), "led%d_fx",  i); nvs_set_u8 (h, key, c.strip[i].effect);
     }
+    nvs_set_u8(h, "led_apmode", c.apply_mode);
     bool ok = (nvs_commit(h) == ESP_OK);
     nvs_close(h);
     return ok;
@@ -103,6 +104,7 @@ bool ConfigStore::load(LedCfg& c)
         snprintf(key, sizeof(key), "led%d_fx", i);
         if (nvs_get_u8(h, key, &u8) == ESP_OK) c.strip[i].effect = u8;
     }
+    if (nvs_get_u8(h, "led_apmode", &u8) == ESP_OK) c.apply_mode = u8;
     nvs_close(h);
     return true;
 }

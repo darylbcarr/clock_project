@@ -131,6 +131,12 @@ public:
     void suppress_apply(bool s) { suppress_apply_ = s; }
 
     /**
+     * @brief Set the Apply-To mode mirrored from the web UI setting.
+     *        0=Both (Ring commands apply to both strips), 1=Each (independent).
+     */
+    void set_apply_mode(uint8_t m) { apply_mode_ = m; }
+
+    /**
      * @brief Register a callback invoked after every successful apply().
      *        Use to persist the current LedManager state to NVS whenever a
      *        Matter command changes colour or brightness at runtime.
@@ -156,6 +162,7 @@ private:
     LedManager& leds_;
 
     bool   suppress_apply_  = false;
+    uint8_t apply_mode_     = 1;  ///< 0=Both (Ring→BOTH), 1=Each
     void (*on_apply_cb_)(void*) = nullptr;
     void*  on_apply_arg_    = nullptr;
 
@@ -178,6 +185,10 @@ private:
         uint8_t  cached_sat = 0;
         bool     has_color_cache = false;
         uint8_t  prev_level = 128;
+
+        // Effect active when the strip was last turned off; restored on turn-on
+        // so that effects survive Matter off/on cycles.
+        LedManager::Effect saved_effect = LedManager::Effect::STATIC;
     };
     EpState ep_[2];   // 0 = Ring, 1 = Base
 

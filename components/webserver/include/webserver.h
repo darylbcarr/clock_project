@@ -30,6 +30,10 @@ public:
     /** @brief Wire in the MatterBridge before start() to expose Matter status in /api/status. */
     void set_matter(MatterBridge* matter) { matter_ = matter; }
 
+    /** @brief Set/get the persisted Apply-To mode (0=Both, 1=Each). */
+    void set_led_apply_mode(uint8_t m) { led_apply_mode_ = m; }
+    uint8_t get_led_apply_mode() const { return led_apply_mode_; }
+
 private:
     // HTTP handlers (static, stored as context via req->user_ctx)
     static esp_err_t on_root(httpd_req_t* req);
@@ -68,6 +72,7 @@ private:
     QueueHandle_t  cmd_queue_          = nullptr;  // depth-1 queue of 32-char cmd names
     int            pending_obs_hour_ = -1;          // for set-time with known position
     int            pending_obs_min_  = -1;
+    uint8_t        led_apply_mode_   = 1;           // 0=Both, 1=Each; persisted via LedCfg
 
     static WebServer* s_instance_;
 };

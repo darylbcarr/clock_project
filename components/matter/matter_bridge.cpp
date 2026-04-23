@@ -321,16 +321,50 @@ void MatterBridge::apply(int idx)
 {
     if (suppress_apply_) return;
 
-    auto tgt = (idx == 0) ? LedManager::Target::STRIP_1
-                          : LedManager::Target::STRIP_2;
+    // In Both mode, Ring (idx=0) controls both strips; Base (idx=1) is always independent.
+    auto tgt = (idx == 0 && apply_mode_ == 0) ? LedManager::Target::BOTH
+             : (idx == 0)                      ? LedManager::Target::STRIP_1
+                                               : LedManager::Target::STRIP_2;
+
+    // Snapshot the live effect before any decision changes it.
+    LedManager::Effect cur = leds_.get_effect(idx);
 
     if (!ep_[idx].on) {
+        // Save the effect if something non-trivial is running.
+        if (cur != LedManager::Effect::STATIC) {
+            ep_[idx].saved_effect = cur;
+        }
         leds_.set_brightness(tgt, 0);
         leds_.set_effect(tgt, LedManager::Effect::STATIC);
         EventLog::log(LogCat::LIGHT_MATTER, "%s off", idx == 0 ? "Ring" : "Base");
         return;
     }
 
+    // A non-static effect is actively running: keep it, just sync brightness.
+    // This also protects effects from being stomped by Level/Color attr updates
+    // that Alexa sends alongside an OnOff command.
+    if (cur != LedManager::Effect::STATIC) {
+        ep_[idx].saved_effect = cur;
+        leds_.set_brightness(tgt, ep_[idx].level);
+        if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
+        return;
+    }
+
+    // No effect running. If one was saved (i.e. we're coming back from off),
+    // restore it; the next attr update will keep it alive via the branch above.
+    if (ep_[idx].saved_effect != LedManager::Effect::STATIC) {
+        LedManager::Effect eff = ep_[idx].saved_effect;
+        ESP_LOGI(TAG, "ep%d restoring effect %s bri=%u",
+                 idx, LedManager::effect_name(eff), ep_[idx].level);
+        EventLog::log(LogCat::LIGHT_MATTER, "%s on → %s",
+            idx == 0 ? "Ring" : "Base", LedManager::effect_name(eff));
+        leds_.set_effect(tgt, eff);
+        leds_.set_brightness(tgt, ep_[idx].level);
+        if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
+        return;
+    }
+
+    // Normal static colour update.
     uint8_t r, g, b;
     switch (ep_[idx].color_mode) {
         case 0x00:  // HS
@@ -344,7 +378,6 @@ void MatterBridge::apply(int idx)
             ct_to_rgb(ep_[idx].color_temp, r, g, b);
             break;
     }
-
     static const char* mode_str[] = { "HS", "XY", "CT" };
     ESP_LOGI(TAG, "ep%d [%s] → RGB(%u,%u,%u) bri=%u",
              idx, mode_str[ep_[idx].color_mode & 0x03], r, g, b, ep_[idx].level);

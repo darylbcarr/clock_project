@@ -24,6 +24,7 @@ struct LedStripCfg {
 /// Persisted LED state for all strips
 struct LedCfg {
     LedStripCfg strip[2];
+    uint8_t apply_mode = 1;  ///< 0=Both (Ring controls both strips), 1=Each (independent)
 };
 
 /// Persisted network credentials and timezone override

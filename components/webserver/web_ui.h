@@ -1142,12 +1142,16 @@ function doSetTime() {
 }
 
 // ── Lights ───────────────────────────────────────────────────────────────────
-// lightTarget: 1=Each (per-strip independent), 0=Both
+// lightTarget: 1=Each (per-strip independent), 0=Both (Ring controls both; Base independent)
 let lightTarget = 1;
-function setLightTarget(t) {
+function applyLightTarget(t) {
   lightTarget = t;
   document.getElementById('tgt-each').classList.toggle('active', t !== 0);
   document.getElementById('tgt-both').classList.toggle('active', t === 0);
+}
+function setLightTarget(t) {
+  applyLightTarget(t);
+  post('set-apply-mode', {mode: t});
 }
 
 function buildColorGrid(n) {
@@ -1165,7 +1169,7 @@ function buildColorGrid(n) {
 }
 
 function doColor(n, r, g, b, el) {
-  const tgt = lightTarget === 0 ? 0 : n;  // 0 = both
+  const tgt = (lightTarget === 0 && n === 1) ? 0 : n;  // Both: Ring→both, Base→base only
   if (tgt === 0) {
     // Highlight matching swatch in both grids
     [1, 2].forEach(m => {
@@ -1183,14 +1187,14 @@ function doColor(n, r, g, b, el) {
 }
 
 function doFx(n, fx) {
-  const tgt = lightTarget === 0 ? '' : n;  // '' prefix = both
+  const tgt = (lightTarget === 0 && n === 1) ? '' : n;  // Both: Ring→both, Base→base only
   post('led' + tgt + '-' + fx);
 }
 
 function doBright(n, val) {
   val = parseInt(val);
   const pct = Math.round(val / 255 * 100) + '%';
-  const tgt = lightTarget === 0 ? 0 : n;
+  const tgt = (lightTarget === 0 && n === 1) ? 0 : n;  // Both: Ring→both, Base→base only
   if (tgt === 0) {
     // Mirror value to both sliders/labels immediately
     [1, 2].forEach(m => {
@@ -1397,6 +1401,7 @@ function applyData(d) {
 
   // Lights
   if (d.leds) {
+    if (d.leds.apply_mode !== undefined) applyLightTarget(d.leds.apply_mode);
     if (d.leds.strip1) applyStrip(1, d.leds.strip1);
     if (d.leds.strip2) applyStrip(2, d.leds.strip2);
   }
