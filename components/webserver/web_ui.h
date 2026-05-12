@@ -514,6 +514,9 @@ input[type=range]::-webkit-slider-thumb {
       <div class="info-item"><div class="info-label">Free Heap</div><div class="info-val" id="inf-heap">—</div></div>
       <div class="info-item"><div class="info-label">Display Min</div><div class="info-val" id="inf-dmin">—</div></div>
     </div>
+    <div style="padding:8px 0 2px;font-size:13px;">
+      <a href="https://darylbcarr.github.io/clock_project/help.html" target="_blank" rel="noopener" style="color:var(--a);display:inline-flex;align-items:center;gap:5px;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Project Help &amp; Documentation ↗</a>
+    </div>
   </div>
 
   <!-- Network -->
