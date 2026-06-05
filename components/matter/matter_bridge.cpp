@@ -317,7 +317,7 @@ esp_err_t MatterBridge::start(bool fresh_commissioning)
 
 // ── apply ─────────────────────────────────────────────────────────────────────
 
-void MatterBridge::apply(int idx)
+void MatterBridge::apply(int idx, bool override_effect)
 {
     if (suppress_apply_) return;
 
@@ -340,28 +340,38 @@ void MatterBridge::apply(int idx)
         return;
     }
 
-    // A non-static effect is actively running: keep it, just sync brightness.
-    // This also protects effects from being stomped by Level/Color attr updates
-    // that Alexa sends alongside an OnOff command.
+    // A non-static effect is actively running.
+    // For explicit color commands (override_effect=true) the user asked for a
+    // specific color — clear the effect and fall through to the static path.
+    // For brightness/on-off commands, just sync brightness and leave the effect running.
     if (cur != LedManager::Effect::STATIC) {
-        ep_[idx].saved_effect = cur;
-        leds_.set_brightness(tgt, ep_[idx].level);
-        if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
-        return;
+        if (!override_effect) {
+            ep_[idx].saved_effect = cur;
+            leds_.set_brightness(tgt, ep_[idx].level);
+            if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
+            return;
+        }
+        // Explicit color command: stop the effect.
+        ep_[idx].saved_effect = LedManager::Effect::STATIC;
+        leds_.set_effect(tgt, LedManager::Effect::STATIC);
     }
 
     // No effect running. If one was saved (i.e. we're coming back from off),
-    // restore it; the next attr update will keep it alive via the branch above.
+    // restore it — unless this is an explicit color command that should override it.
     if (ep_[idx].saved_effect != LedManager::Effect::STATIC) {
-        LedManager::Effect eff = ep_[idx].saved_effect;
-        ESP_LOGI(TAG, "ep%d restoring effect %s bri=%u",
-                 idx, LedManager::effect_name(eff), ep_[idx].level);
-        EventLog::log(LogCat::LIGHT_MATTER, "%s on → %s",
-            idx == 0 ? "Ring" : "Base", LedManager::effect_name(eff));
-        leds_.set_effect(tgt, eff);
-        leds_.set_brightness(tgt, ep_[idx].level);
-        if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
-        return;
+        if (!override_effect) {
+            LedManager::Effect eff = ep_[idx].saved_effect;
+            ESP_LOGI(TAG, "ep%d restoring effect %s bri=%u",
+                     idx, LedManager::effect_name(eff), ep_[idx].level);
+            EventLog::log(LogCat::LIGHT_MATTER, "%s on → %s",
+                idx == 0 ? "Ring" : "Base", LedManager::effect_name(eff));
+            leds_.set_effect(tgt, eff);
+            leds_.set_brightness(tgt, ep_[idx].level);
+            if (on_apply_cb_) on_apply_cb_(on_apply_arg_);
+            return;
+        }
+        // Explicit color command overrides any saved effect.
+        ep_[idx].saved_effect = LedManager::Effect::STATIC;
     }
 
     // Normal static colour update.
@@ -437,7 +447,9 @@ esp_err_t MatterBridge::attr_cb(
         if (attribute_id == ATTR_COLOR_MODE) {
             self->ep_[idx].color_mode = val->val.u8;
             ESP_LOGI(TAG, "ep%d ColorMode=%u", idx, val->val.u8);
-            // Mode change alone doesn't update color — wait for the coordinate attrs
+            // Apply now so that if the mode attribute arrives after its coordinate
+            // (e.g. CT mode fires after ColorTemp), the correct color is shown.
+            if (self->ep_[idx].on) self->apply(idx, true);
         } else if (attribute_id == ATTR_HUE) {
             self->ep_[idx].hue = val->val.u8;
             ESP_LOGD(TAG, "ep%d Hue=%u", idx, val->val.u8);
@@ -447,7 +459,7 @@ esp_err_t MatterBridge::attr_cb(
                 self->ep_[idx].cached_sat = self->ep_[idx].saturation;
                 self->ep_[idx].has_color_cache = true;
             }
-            if (self->ep_[idx].on) self->apply(idx);
+            if (self->ep_[idx].on) self->apply(idx, true);
         } else if (attribute_id == ATTR_SAT) {
             self->ep_[idx].saturation = val->val.u8;
             ESP_LOGD(TAG, "ep%d Sat=%u", idx, val->val.u8);
@@ -458,19 +470,19 @@ esp_err_t MatterBridge::attr_cb(
                 self->ep_[idx].cached_sat = val->val.u8;
                 self->ep_[idx].has_color_cache = true;
             }
-            if (self->ep_[idx].on) self->apply(idx);
+            if (self->ep_[idx].on) self->apply(idx, true);
         } else if (attribute_id == ATTR_CUR_X) {
             self->ep_[idx].color_x = val->val.u16;
             ESP_LOGD(TAG, "ep%d X=%u", idx, val->val.u16);
-            if (self->ep_[idx].on) self->apply(idx);
+            if (self->ep_[idx].on) self->apply(idx, true);
         } else if (attribute_id == ATTR_CUR_Y) {
             self->ep_[idx].color_y = val->val.u16;
             ESP_LOGD(TAG, "ep%d Y=%u", idx, val->val.u16);
-            if (self->ep_[idx].on) self->apply(idx);
+            if (self->ep_[idx].on) self->apply(idx, true);
         } else if (attribute_id == ATTR_COLOR_TEMP) {
             self->ep_[idx].color_temp = val->val.u16;
             ESP_LOGD(TAG, "ep%d CT=%u mireds", idx, val->val.u16);
-            if (self->ep_[idx].on) self->apply(idx);
+            if (self->ep_[idx].on) self->apply(idx, true);
         }
     }
 

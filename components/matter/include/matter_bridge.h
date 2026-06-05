@@ -200,8 +200,10 @@ private:
     };
     EpCtx ctx_[2];
 
-    // Apply current ep_[idx] state to LedManager
-    void apply(int idx);
+    // Apply current ep_[idx] state to LedManager.
+    // override_effect=true: explicit color command — clears any running effect.
+    // override_effect=false: brightness/on-off — preserves running effects.
+    void apply(int idx, bool override_effect = false);
 
     static esp_err_t attr_cb(
         esp_matter::attribute::callback_type_t type,
